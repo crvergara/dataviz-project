@@ -7,14 +7,15 @@ def ingest_casen_stata(file_path: str, output_path: str):
     # We only load the columns we need for the Shift-Share and validation.
     # WARNING: Verify these exact names in your Excel codebook!
     target_columns = [
-        'region', 
-        'oficio1_08', 
-        'rama1', 
-        'e6a',
-        'e6c_completo' 
-        'ocup_ref', 
-        'yoprcor', 
-        'expr'
+        'id_vivienda', 'folio', 'id_persona', 'region', 'expr',
+        'v13',          # Housing tenure
+        'v15',          # Purchased with subsidy (1=Yes, 2=No)
+        'o28a_hr',      # Commute time (hours)
+        'o28a_min',     # Commute time (minutes)
+        'yautcorh',     # Autonomous household income
+        'ysubh',        # Household subsidies
+        'ytotcorh',     # Total household income
+        'pobreza'       # Poverty status
     ]
     
     # read_stata preserves the native data types defined by the Ministry.
