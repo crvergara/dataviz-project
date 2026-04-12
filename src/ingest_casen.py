@@ -10,6 +10,11 @@ def ingest_casen_stata(file_path: str, output_path: str):
         'id_vivienda', 'folio', 'id_persona', 'region', 'expr',
         'v13',          # Housing tenure
         'v15',          # Purchased with subsidy (1=Yes, 2=No)
+        'sexo',         # Gender (1=H, 2=M)
+        'activ',        # Labor force status
+        'o9a',          # Occupation status
+        'oficio1_08',   # CIUO 08 Group
+        'oficio4_08',   # CIUO 08 Detailed
         'o28a_hr',      # Commute time (hours)
         'o28a_min',     # Commute time (minutes)
         'yautcorh',     # Autonomous household income

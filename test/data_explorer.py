@@ -2,25 +2,10 @@ import pandas as pd
 import numpy as np
 import os
 import sys
-
-class OutputLogger(object):
-    def __init__(self, filepath):
-        self.terminal = sys.stdout
-        self.log = open(filepath, "w", encoding="utf-8")
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def run_data_explorer(parquet_path='data/processed/icp_results.parquet'):
-    # Create the output directory and start logging
-    os.makedirs('data_explorer', exist_ok=True)
-    sys.stdout = OutputLogger('data_explorer/icp_tesis.txt')
-    
     try:
         df = pd.read_parquet(parquet_path)
         # Clean potential infinite values for statistical analysis
@@ -102,6 +87,32 @@ def run_data_explorer(parquet_path='data/processed/icp_results.parquet'):
     print(f"Subsidiados: {sub[sub['commute_total_hrs'] > 0]['commute_total_hrs'].mean():.2f} horas")
     print(f"No Subsidiados: {priv[priv['commute_total_hrs'] > 0]['commute_total_hrs'].mean():.2f} horas")
 
+    print("\n--- C. EXCLUSIÓN LABORAL (Hogares con 0 horas de viaje) ---")
+    zero_sub = (sub['commute_total_hrs'] == 0).mean() * 100
+    zero_priv = (priv['commute_total_hrs'] == 0).mean() * 100
+    print(f"Subsidio: {zero_sub:.2f}% de los hogares NO reportan viajes al trabajo.")
+    print(f"Privado: {zero_priv:.2f}% de los hogares NO reportan viajes al trabajo.")
+    print(f"Diferencia: {zero_sub - zero_priv:+.2f} puntos porcentuales.")
+
+    print("\n--- D. COMPOSICIÓN DEL MERCADO LABORAL (Variable 'activ') ---")
+    # Mapping codes: 1: Ocupado, 2: Desocupado, 3: Inactivo
+    # We only care about the distribution between Subsidized and Others
+    labor_map = {1: 'Ocupado', 2: 'Desocupado', 3: 'Inactivo'}
+    df['labor_status'] = df['activ'].map(labor_map)
+    
+    labor_analysis = df.groupby(['grupo_vivienda', 'labor_status']).size().unstack(fill_value=0)
+    labor_pct = labor_analysis.div(labor_analysis.sum(axis=1), axis=0) * 100
+    print(labor_pct.round(2))
+
+    print("\n--- E. SESGO DE GÉNERO EN EL TRABAJO (Mujer + Subsidio) ---")
+    # Mapping: 1: Hombre, 2: Mujer
+    df['genero'] = df['sexo'].map({1: 'Hombre', 2: 'Mujer'})
+    
+    # Analyze the percentage of Women who are 'Inactivo' in subsidized vs non-subsidized
+    inactivo_mujeres = df[df['genero'] == 'Mujer'].groupby('grupo_vivienda')['activ'].apply(lambda x: (x == 3).mean() * 100)
+    print("Porcentaje de Mujeres en situación de INACTIVIDAD:")
+    print(inactivo_mujeres.round(2))
+
     print("\n" + "="*80)
     print(" 5. ANÁLISIS REGIONAL DE TIEMPOS DE VIAJE (Regional Commute) ")
     print("="*80)
@@ -121,6 +132,45 @@ def run_data_explorer(parquet_path='data/processed/icp_results.parquet'):
     print(f"- Registros con tiempo de viaje igual a cero: {zero_commute:,} (Posible desempleo, inactividad o trabajo en casa)")
     high_subsidy = (df['subsidy_ratio'] > 1).sum()
     print(f"- Hogares donde el subsidio es mayor al ingreso total (Ratio > 1): {high_subsidy:,}")
+
+
+    print("\n" + "="*80)
+    print(" 7. BRECHAS REGIONALES DE POBREZA E INGRESOS ")
+    print("="*80)
+    df_gaps = df.dropna(subset=['region', 'grupo_vivienda', 'yautcorh', 'pobreza']).copy()
+    region_map = {1: "Tarapacá", 2: "Antofagasta", 3: "Atacama", 4: "Coquimbo", 5: "Valparaíso", 6: "O'Higgins", 7: "Maule", 8: "Biobío", 9: "Araucanía", 10: "Los Lagos", 11: "Aysén", 12: "Magallanes", 13: "Metropolitana", 14: "Los Ríos", 15: "Arica y Parinacota", 16: "Ñuble"}
+    df_gaps['region_name'] = df_gaps['region'].map(region_map)
+    df_gaps['is_poor'] = df_gaps['pobreza'].isin([1.0, 2.0])
+    grp = df_gaps.groupby(['region_name', 'grupo_vivienda']).apply(
+        lambda x: pd.Series({
+            'poverty_rate': np.average(x['is_poor'], weights=x['expr']) * 100 if x['expr'].sum() > 0 else 0,
+            'median_income': x['yautcorh'].median()
+        })
+    ).round(2).reset_index()
+    print(grp.to_string(index=False))
+
+    print("\n" + "="*80)
+    print(" 8. PROPORCIÓN DEL INGRESO POR SUBSIDIOS POR REGIÓN ")
+    print("="*80)
+    df_sub = df.dropna(subset=['region', 'grupo_vivienda', 'ysubh', 'yautcorh', 'ytotcorh']).copy()
+    df_sub['region_name'] = df_sub['region'].map(region_map)
+    
+    grp_sub = df_sub.groupby(['region_name', 'grupo_vivienda']).apply(
+        lambda x: pd.Series({
+            'pct_ingreso_subsidio': (np.average(x['ysubh'], weights=x['expr']) / np.average(x['ytotcorh'], weights=x['expr'])) * 100 if np.average(x['ytotcorh'], weights=x['expr']) > 0 else 0,
+            'pct_ingreso_autonomo': (np.average(x['yautcorh'], weights=x['expr']) / np.average(x['ytotcorh'], weights=x['expr'])) * 100 if np.average(x['ytotcorh'], weights=x['expr']) > 0 else 0
+        })
+    ).round(2).reset_index()
+    print(grp_sub.to_string(index=False))
+
+    print("\n" + "="*80)
+    print(" 9. MULTIPLICADOR DE DEPENDENCIA ESTATAL (1x = Base Privada) ")
+    print("="*80)
+    pivot_mult = grp_sub.pivot(index='region_name', columns='grupo_vivienda', values='pct_ingreso_subsidio')
+    pivot_mult['multiplicador_dependencia'] = (pivot_mult['Subsidiada'] / pivot_mult['No Subsidiada / Otro']).round(2)
+    pivot_mult = pivot_mult.sort_values('multiplicador_dependencia', ascending=False).reset_index()
+    print(pivot_mult.to_string(index=False))
+
 
 if __name__ == "__main__":
     run_data_explorer()

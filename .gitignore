@@ -213,3 +213,4 @@ data/raw/*.zip
 data/raw/*.crdownload
 data/
 deliverables/
+data_explorer/
