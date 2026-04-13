@@ -391,6 +391,78 @@ def generate_dependency_multiplier_plot(df):
     plt.close()
     print(f"[OK] Visualization 4 successfully saved to: {out_path}")
 
+def generate_crowding_dependency_plot(df):
+    """Generates a line chart showing dependency across crowding levels."""
+    print("\n" + "="*80)
+    print(" GENERATING VISUALIZATION 5: HACINAMIENTO Y DEPENDENCIA ")
+    print("="*80)
+
+    if 'ind_hacina' not in df.columns:
+        print("[!] 'ind_hacina' no encontrado. Saltando...")
+        return
+
+    df_hrel = df.dropna(subset=['ind_hacina', 'ysubh', 'ytotcorh', 'grupo_vivienda']).copy()
+    
+    hacin_map = {1.0: 'Sin hacinamiento', 2.0: 'Hacinamiento\nmedio bajo', 
+                 3.0: 'Hacinamiento\nmedio alto', 4.0: 'Hacinamiento\ncrítico', 
+                 5.0: 'Hacinamiento\ncrítico'}
+    df_hrel['nivel_hacinamiento'] = df_hrel['ind_hacina'].map(hacin_map).fillna('Otro')
+    df_hrel = df_hrel[df_hrel['nivel_hacinamiento'] != 'Otro']
+    
+    grp = df_hrel.groupby(['grupo_vivienda', 'nivel_hacinamiento']).apply(
+        lambda x: pd.Series({
+            'pct_ingreso_subsidio': (np.average(x['ysubh'], weights=x['expr']) / np.average(x['ytotcorh'], weights=x['expr'])) * 100 if np.average(x['ytotcorh'], weights=x['expr']) > 0 else 0
+        })
+    ).reset_index()
+    
+    cat_order = ['Sin hacinamiento', 'Hacinamiento\nmedio bajo', 'Hacinamiento\nmedio alto', 'Hacinamiento\ncrítico']
+    grp['nivel_hacinamiento'] = pd.Categorical(grp['nivel_hacinamiento'], categories=cat_order, ordered=True)
+    grp = grp.sort_values('nivel_hacinamiento')
+    
+    sub_data = grp[grp['grupo_vivienda'] == 'Subsidiada']
+    priv_data = grp[grp['grupo_vivienda'] == 'No Subsidiada / Otro']
+    
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor='white')
+    
+    x = np.arange(len(cat_order))
+    
+    # Lines
+    ax.plot(x, sub_data['pct_ingreso_subsidio'], color='#B03A2E', linewidth=4, marker='o', markersize=10, label='Vivienda Subsidiada', zorder=3)
+    ax.plot(x, priv_data['pct_ingreso_subsidio'], color='#8DA9C4', linewidth=3, marker='o', markersize=8, label='Sin Subsidio / Privada', zorder=3)
+    
+    # Fill between lines
+    ax.fill_between(x, priv_data['pct_ingreso_subsidio'], sub_data['pct_ingreso_subsidio'], color='#F28F8C', alpha=0.15, zorder=2)
+    
+    # Annotations
+    for i, (_, row) in enumerate(sub_data.iterrows()):
+        ax.text(i, row['pct_ingreso_subsidio'] + 0.6, f"{row['pct_ingreso_subsidio']:.1f}%", ha='center', color='#B03A2E', fontweight='bold', fontsize=10)
+    for i, (_, row) in enumerate(priv_data.iterrows()):
+        ax.text(i, row['pct_ingreso_subsidio'] - 1.2, f"{row['pct_ingreso_subsidio']:.1f}%", ha='center', color='#5D6D7E', fontweight='bold', fontsize=10)
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels(cat_order, fontsize=11, fontweight='bold', color='#2C3E50')
+    ax.set_ylim(0, max(sub_data['pct_ingreso_subsidio']) + 3)
+    ax.set_ylabel("Dependencia del Estado (% del Ingreso Mantenido)", fontsize=11, labelpad=10, fontweight='bold', color='#5D6D7E')
+    ax.set_title("La Capa Ineludible:\nLa dependencia estatal es estructuralmente mayor sin importar el grado de hacinamiento", 
+                 fontsize=14, fontweight='bold', pad=20, color='#2C3E50')
+                 
+    import seaborn as sns
+    sns.despine(left=True, bottom=False)
+    ax.spines['bottom'].set_color('#E0E0E0')
+    ax.yaxis.grid(color='#F2F3F4', linestyle='-', linewidth=1, zorder=0)
+    ax.set_axisbelow(True)
+    
+    ax.legend(frameon=False, fontsize=11, loc='lower right')
+    
+    plt.tight_layout()
+    out_dir = "data_explorer"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "viz5_crowding_dependency.png")
+    plt.savefig(out_path, dpi=300, facecolor='white', bbox_inches='tight')
+    plt.close()
+    
+    print(f"[OK] Visualization 5 successfully saved to: {out_path}")
+
 if __name__ == '__main__':
     df = pd.read_parquet('data/processed/icp_results.parquet')
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -399,3 +471,4 @@ if __name__ == '__main__':
     generate_regional_gaps_plot(df)
     generate_income_composition_plot(df)
     generate_dependency_multiplier_plot(df)
+    generate_crowding_dependency_plot(df)

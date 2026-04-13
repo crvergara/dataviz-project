@@ -20,7 +20,8 @@ def ingest_casen_stata(file_path: str, output_path: str):
         'yautcorh',     # Autonomous household income
         'ysubh',        # Household subsidies
         'ytotcorh',     # Total household income
-        'pobreza'       # Poverty status
+        'pobreza',      # Poverty status
+        'ind_hacina'    # Overcrowding index
     ]
     
     # read_stata preserves the native data types defined by the Ministry.

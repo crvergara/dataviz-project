@@ -171,6 +171,51 @@ def run_data_explorer(parquet_path='data/processed/icp_results.parquet'):
     pivot_mult = pivot_mult.sort_values('multiplicador_dependencia', ascending=False).reset_index()
     print(pivot_mult.to_string(index=False))
 
+    print("\n" + "="*80)
+    print(" 10. ESTADO DE HACINAMIENTO: SUBSIDIADA VS NO SUBSIDIADA ")
+    print("="*80)
+    if 'ind_hacina' in df.columns:
+        df_hacin = df.dropna(subset=['region', 'grupo_vivienda', 'ind_hacina']).copy()
+        df_hacin['region_name'] = df_hacin['region'].map(region_map)
+        
+        # In CASEN, 1 = Sin hacinamiento. > 1 means some level of overcrowding.
+        df_hacin['is_overcrowded'] = df_hacin['ind_hacina'] > 1.0
+        
+        grp_hacin = df_hacin.groupby(['region_name', 'grupo_vivienda']).apply(
+            lambda x: pd.Series({
+                'tasa_hacinamiento_pct': np.average(x['is_overcrowded'], weights=x['expr']) * 100 if x['expr'].sum() > 0 else 0
+            })
+        ).round(2).reset_index()
+        
+        pivot_hacin = grp_hacin.pivot(index='region_name', columns='grupo_vivienda', values='tasa_hacinamiento_pct')
+        pivot_hacin['brecha_pp'] = (pivot_hacin['Subsidiada'] - pivot_hacin['No Subsidiada / Otro']).round(2)
+        pivot_hacin = pivot_hacin.sort_values('Subsidiada', ascending=False).reset_index()
+        print(pivot_hacin.to_string(index=False))
+    else:
+        print("La variable 'ind_hacina' no existe en el dataset.")
+
+    print("\n" + "="*80)
+    print(" 11. RELACIÓN HACINAMIENTO Y DEPENDENCIA ESTATAL ")
+    print("="*80)
+    if 'ind_hacina' in df.columns:
+        df_hrel = df.dropna(subset=['ind_hacina', 'ysubh', 'ytotcorh', 'grupo_vivienda']).copy()
+        
+        # CASEN categorizes ind_hacina into 1, 2, 3, 4
+        hacin_map = {1.0: '1. Sin hacinamiento', 2.0: '2. Medio bajo', 3.0: '3. Medio alto', 4.0: '4. Crítico', 5.0: '4. Crítico'}
+        df_hrel['nivel_hacinamiento'] = df_hrel['ind_hacina'].map(hacin_map).fillna('Otro')
+        
+        grp_hrel = df_hrel.groupby(['grupo_vivienda', 'nivel_hacinamiento']).apply(
+            lambda x: pd.Series({
+                'pct_ingreso_subsidio': (np.average(x['ysubh'], weights=x['expr']) / np.average(x['ytotcorh'], weights=x['expr'])) * 100 if np.average(x['ytotcorh'], weights=x['expr']) > 0 else 0,
+                'avg_ingreso_subsidio': np.average(x['ysubh'], weights=x['expr'])
+            })
+        ).round(2).reset_index()
+        
+        # Filter 'Otro' if there is any garbage
+        grp_hrel = grp_hrel[grp_hrel['nivel_hacinamiento'] != 'Otro']
+        grp_hrel = grp_hrel.sort_values(['grupo_vivienda', 'nivel_hacinamiento'])
+        
+        print(grp_hrel.to_string(index=False))
 
 if __name__ == "__main__":
     run_data_explorer()
