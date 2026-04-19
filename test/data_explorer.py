@@ -219,3 +219,4 @@ def run_data_explorer(parquet_path='data/processed/icp_results.parquet'):
 
 if __name__ == "__main__":
     run_data_explorer()
+
