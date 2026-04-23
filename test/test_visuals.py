@@ -423,36 +423,56 @@ def generate_crowding_dependency_plot(df):
     priv_data = grp[grp['grupo_vivienda'] == 'No Subsidiada / Otro']
     
     fig, ax = plt.subplots(figsize=(10, 6), facecolor='white')
+    y_positions = np.arange(len(cat_order))
     
-    x = np.arange(len(cat_order))
+    sub_vals = []
+    priv_vals = []
     
-    # Lines
-    ax.plot(x, sub_data['pct_ingreso_subsidio'], color='#B03A2E', linewidth=4, marker='o', markersize=10, label='Vivienda Subsidiada', zorder=3)
-    ax.plot(x, priv_data['pct_ingreso_subsidio'], color='#8DA9C4', linewidth=3, marker='o', markersize=8, label='Sin Subsidio / Privada', zorder=3)
+    for cat in cat_order:
+        sv = sub_data[sub_data['nivel_hacinamiento'] == cat]['pct_ingreso_subsidio'].values[0]
+        pv = priv_data[priv_data['nivel_hacinamiento'] == cat]['pct_ingreso_subsidio'].values[0]
+        sub_vals.append(sv)
+        priv_vals.append(pv)
+        
+    for i, (sv, pv) in enumerate(zip(sub_vals, priv_vals)):
+        gap = sv - pv
+        
+        # Connect line
+        ax.plot([pv, sv], [i, i], color='#DDE2E5', linewidth=5, zorder=1)
+        
+        # Points
+        ax.scatter(pv, i, color='#8DA9C4', s=250, edgecolor='white', linewidth=2, zorder=2)
+        ax.scatter(sv, i, color='#B03A2E', s=250, edgecolor='white', linewidth=2, zorder=2)
+        
+        # Annotations
+        ax.text(pv, i - 0.20, f"{pv:.1f}%", ha='center', va='top', color='#5D6D7E', fontweight='bold', fontsize=10)
+        ax.text(sv, i + 0.20, f"{sv:.1f}%", ha='center', va='bottom', color='#B03A2E', fontweight='bold', fontsize=10)
+        ax.text((sv + pv) / 2, i + 0.15, f"+{gap:.1f} pp", ha='center', va='bottom', color='#34495E', fontweight='bold', fontsize=10)
+        
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(cat_order, fontsize=11, fontweight='bold', color='#2C3E50')
     
-    # Fill between lines
-    ax.fill_between(x, priv_data['pct_ingreso_subsidio'], sub_data['pct_ingreso_subsidio'], color='#F28F8C', alpha=0.15, zorder=2)
+    min_x = min(priv_vals)
+    max_x = max(sub_vals)
+    ax.set_xlim(min_x - 3, max_x + 3)
+    ax.set_ylim(-0.8, len(cat_order) - 0.2)
     
-    # Annotations
-    for i, (_, row) in enumerate(sub_data.iterrows()):
-        ax.text(i, row['pct_ingreso_subsidio'] + 0.6, f"{row['pct_ingreso_subsidio']:.1f}%", ha='center', color='#B03A2E', fontweight='bold', fontsize=10)
-    for i, (_, row) in enumerate(priv_data.iterrows()):
-        ax.text(i, row['pct_ingreso_subsidio'] - 1.2, f"{row['pct_ingreso_subsidio']:.1f}%", ha='center', color='#5D6D7E', fontweight='bold', fontsize=10)
-    
-    ax.set_xticks(x)
-    ax.set_xticklabels(cat_order, fontsize=11, fontweight='bold', color='#2C3E50')
-    ax.set_ylim(0, max(sub_data['pct_ingreso_subsidio']) + 3)
-    ax.set_ylabel("Dependencia del Estado (% del Ingreso Mantenido)", fontsize=11, labelpad=10, fontweight='bold', color='#5D6D7E')
-    ax.set_title("La Capa Ineludible:\nLa dependencia estatal es estructuralmente mayor sin importar el grado de hacinamiento", 
-                 fontsize=14, fontweight='bold', pad=20, color='#2C3E50')
+    ax.set_xlabel("Dependencia del Estado (% del Ingreso Total)", fontsize=12, labelpad=15, fontweight='bold', color='#5D6D7E')
+    ax.set_title("La Brecha Ineludible:\nDependencia Estatal Constante Frente al Hacinamiento", 
+                 fontsize=15, fontweight='bold', pad=25, color='#2C3E50')
                  
     import seaborn as sns
+    from matplotlib.lines import Line2D
     sns.despine(left=True, bottom=False)
     ax.spines['bottom'].set_color('#E0E0E0')
-    ax.yaxis.grid(color='#F2F3F4', linestyle='-', linewidth=1, zorder=0)
+    ax.xaxis.grid(color='#F2F3F4', linestyle='-', linewidth=1, zorder=0)
     ax.set_axisbelow(True)
     
-    ax.legend(frameon=False, fontsize=11, loc='lower right')
+    custom_lines = [
+        Line2D([0], [0], color='#8DA9C4', marker='o', linestyle='None', markersize=10),
+        Line2D([0], [0], color='#B03A2E', marker='o', linestyle='None', markersize=10)
+    ]
+    ax.legend(custom_lines, ['Sin Subsidio / Privada', 'Vivienda Subsidiada'], loc='lower right', frameon=False, fontsize=11)
     
     plt.tight_layout()
     out_dir = "data_explorer"
