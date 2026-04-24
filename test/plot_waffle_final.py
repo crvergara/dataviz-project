@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+from matplotlib.path import Path
 
 def generate_senior_waffle(df):
     print("Calculando vulnerabilidad nacional compuesta...")
@@ -31,13 +32,25 @@ def generate_senior_waffle(df):
     c_ivory_mist    = '#f8f4e3' # Fondo
     c_dusk_blue     = '#3c4f76' # Económica
     c_sandy_brown   = '#f19143' # Violencia
-    c_empty         = '#d1ccc0' # Ninguna
+    c_empty         = '#8b969e' # Ninguna (Gris oscuro más visible)
 
-    # -- 3. FIGURA --
-    fig, ax = plt.subplots(figsize=(12, 6), dpi=200, facecolor=c_ivory_mist)
+    # -- 3. CREAR MARCADOR DE CASITA PERSONALIZADO --
+    verts = [
+        (-0.4, -0.5), # left bottom
+        (0.4, -0.5),  # right bottom
+        (0.4, 0.2),   # right top wall
+        (0.0, 0.6),   # roof peak
+        (-0.4, 0.2),  # left top wall
+        (-0.4, -0.5)  # close
+    ]
+    codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO, Path.LINETO, Path.CLOSEPOLY]
+    house_path = Path(verts, codes)
+
+    # -- 4. FIGURA --
+    fig, ax = plt.subplots(figsize=(15, 8), dpi=200, facecolor=c_ivory_mist)
     ax.set_facecolor(c_ivory_mist)
 
-    # -- 4. CREAR LA MATRIZ DE PUNTOS --
+    # -- 5. CREAR LA MATRIZ DE PUNTOS --
     colors_list = (
         [c_deep_walnut] * pct_ambas +
         [c_sandy_brown] * pct_solo_v +
@@ -54,37 +67,55 @@ def generate_senior_waffle(df):
             x_coords.append(x)
             y_coords.append(y)
 
-    # Usar puntos (scatter circles) para un look más "data science" moderno en vez de cuadrados gruesos
-    ax.scatter(x_coords, y_coords, s=250, c=colors_list, marker='o', alpha=0.9, edgecolors='none', zorder=3)
+    # Dibujar usando el marcador de casita gigante
+    ax.scatter(x_coords, y_coords, s=900, c=colors_list, marker=house_path, alpha=0.9, edgecolors='none', zorder=3)
 
-    # -- 5. LEYENDA TIPOGRÁFICA (TUFTE STYLE) --
+    # -- 6. LEYENDA TIPOGRÁFICA Y AGREGADOS --
     text_x = 11.5
     
-    # Bloque de Fallo (64%)
-    pct_fallo = pct_ambas + pct_solo_v + pct_solo_e
-    ax.text(text_x, 8.5, f"{pct_fallo}%", color=c_deep_walnut, fontsize=42, fontweight='black', va='center')
-    ax.text(text_x + 3.2, 8.5, "VULNERABILIDAD\nESTRUCTURAL", color=c_deep_walnut, fontsize=12, fontweight='bold', va='center', linespacing=1.2)
-    
-    # Desglose minimalista
-    ax.scatter(text_x + 0.2, 6.5, s=100, c=c_sandy_brown, marker='o')
-    ax.text(text_x + 0.8, 6.5, f"{pct_solo_v}% Trampa de Violencia", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center')
-    
-    ax.scatter(text_x + 0.2, 5.0, s=100, c=c_dusk_blue, marker='o')
-    ax.text(text_x + 0.8, 5.0, f"{pct_solo_e}% Trampa Económica", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center')
+    # Indicador de Nivel Nacional
+    ax.text(text_x, 9.8, "PANORAMA NACIONAL: VIVIENDAS SUBSIDIADAS", color=c_deep_walnut, fontsize=16, fontweight='black', va='center', alpha=0.8)
+    ax.text(text_x, 9.2, "De cada 100 hogares que reciben una vivienda social en Chile:", color=c_deep_walnut, fontsize=14, style='italic', va='center', alpha=0.8)
+    ax.plot([text_x, text_x + 9], [8.7, 8.7], color=c_deep_walnut, lw=1.5, alpha=0.2)
 
-    ax.scatter(text_x + 0.2, 3.5, s=100, c=c_deep_walnut, marker='o')
-    ax.text(text_x + 0.8, 3.5, f"{pct_ambas}% Doble Vulnerabilidad", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center')
+    # LEYENDA (Desglose gigante arriba)
+    y_v = 7.5
+    y_e = 5.5
+    y_a = 3.5
+    
+    # Violencia
+    ax.scatter(text_x + 0.3, y_v, s=500, c=c_sandy_brown, marker=house_path)
+    ax.text(text_x + 1.2, y_v, f"{pct_solo_v}  Trampa de Violencia", color=c_deep_walnut, fontsize=21, fontweight='black', va='center')
+    ax.text(text_x + 1.2, y_v - 0.6, "Expuestos frecuentemente a narcotráfico o balaceras.", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center', alpha=0.8)
+
+    # Economía
+    ax.scatter(text_x + 0.3, y_e, s=500, c=c_dusk_blue, marker=house_path)
+    ax.text(text_x + 1.2, y_e, f"{pct_solo_e}  Trampa Económica", color=c_deep_walnut, fontsize=21, fontweight='black', va='center')
+    ax.text(text_x + 1.2, y_e - 0.6, "Incapacidad autónoma y altísima dependencia estatal.", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center', alpha=0.8)
+
+    # Ambas
+    ax.scatter(text_x + 0.3, y_a, s=500, c=c_deep_walnut, marker=house_path)
+    ax.text(text_x + 1.2, y_a, f"{pct_ambas}  Doble Vulnerabilidad", color=c_deep_walnut, fontsize=21, fontweight='black', va='center')
+    ax.text(text_x + 1.2, y_a - 0.6, "Sufren extrema violencia y pobreza simultáneamente.", color=c_deep_walnut, fontsize=11, fontweight='normal', va='center', alpha=0.8)
 
     # Línea separadora sutil
-    ax.plot([text_x, text_x + 6], [2.0, 2.0], color=c_deep_walnut, lw=0.5, alpha=0.3)
+    ax.plot([text_x, text_x + 9], [2.0, 2.0], color=c_deep_walnut, lw=0.8, alpha=0.3)
 
-    # Bloque de Éxito (36%)
-    ax.text(text_x, 0.5, f"{pct_ninguna}%", color=c_empty, fontsize=32, fontweight='black', va='center')
-    ax.text(text_x + 2.8, 0.5, "SIN VULNERABILIDAD\nSEVERA", color=c_empty, fontsize=10, fontweight='bold', va='center', linespacing=1.2)
+    # PORCENTAJES AGREGADOS (Esquina inferior derecha, LADO A LADO)
+    pct_fallo = pct_ambas + pct_solo_v + pct_solo_e
+    
+    y_agg = 0.5
+    # Fallo (64%) a la izquierda
+    ax.text(text_x, y_agg, f"{pct_fallo}%", color=c_deep_walnut, fontsize=32, fontweight='black', va='center')
+    ax.text(text_x + 1.8, y_agg, "VULNERABILIDAD\nESTRUCTURAL", color=c_deep_walnut, fontsize=12, fontweight='bold', va='center', linespacing=1.2)
+    
+    # Éxito (36%) a la derecha
+    ax.text(text_x + 5.5, y_agg, f"{pct_ninguna}%", color=c_empty, fontsize=32, fontweight='black', va='center')
+    ax.text(text_x + 7.3, y_agg, "SIN VULNERABILIDAD\nSEVERA", color=c_empty, fontsize=12, fontweight='bold', va='center', linespacing=1.2)
 
-    # -- 6. LIMPIEZA DE EJES --
-    ax.set_xlim(-1, 18)
-    ax.set_ylim(-1, 10)
+    # -- 7. LIMPIEZA DE EJES --
+    ax.set_xlim(-1, 22)
+    ax.set_ylim(-1, 10.5)
     ax.axis('off')
 
     plt.tight_layout()
