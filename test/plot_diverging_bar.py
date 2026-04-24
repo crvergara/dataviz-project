@@ -15,6 +15,7 @@ def generate_butterfly_chart(df):
     df['Ingreso Autónomo <$600k']      = np.where(df['yautcorh'] < 600000, 1, 0)
     df['Pobreza por Ingresos']         = np.where(df['pobreza'].isin([1, 2]), 1, 0)
 
+    # Orden explícito de abajo hacia arriba
     all_vars = [
         'Ingreso Autónomo <$600k',
         'Alta Dependencia (>20%)',
@@ -55,7 +56,6 @@ def generate_butterfly_chart(df):
     fig, ax = plt.subplots(figsize=(14, 8), dpi=150, facecolor=c_ivory_mist)
     ax.set_facecolor(c_ivory_mist)
 
-    y_pos = np.arange(len(plot_df))
     bar_height = 0.40
 
     # Línea central 0
@@ -82,26 +82,18 @@ def generate_butterfly_chart(df):
                 fontsize=12, fontweight='bold', zorder=5,
                 bbox=dict(facecolor=c_ivory_mist, edgecolor='none', pad=2, alpha=0.9))
 
-        # Lógica de "Ganador" y "Perdedor" para los textos
-        color_re_txt = c_dusk_blue if re > rm else '#95a5a6'
-        size_re_txt  = 16 if re > rm else 12
-        weight_re_txt= 'black' if re > rm else 'normal'
-
-        color_rm_txt = c_sandy_brown if rm > re else '#95a5a6'
-        size_rm_txt  = 16 if rm > re else 12
-        weight_rm_txt= 'black' if rm > re else 'normal'
-
-        # Porcentaje Regiones (Izquierda)
+        # Porcentaje Regiones (Izquierda, estándar azul)
         ax.text(-re - 2, yp, f"{re:.0f}%", 
-                ha='right', va='center', color=color_re_txt, 
-                fontsize=size_re_txt, fontweight=weight_re_txt, zorder=5)
+                ha='right', va='center', color=c_dusk_blue, 
+                fontsize=15, fontweight='black', zorder=5)
 
-        # Porcentaje RM (Derecha)
+        # Porcentaje RM (Derecha, estándar naranja)
         ax.text(rm + 2, yp, f"{rm:.0f}%", 
-                ha='left', va='center', color=color_rm_txt, 
-                fontsize=size_rm_txt, fontweight=weight_rm_txt, zorder=5)
+                ha='left', va='center', color=c_sandy_brown, 
+                fontsize=15, fontweight='black', zorder=5)
 
     # -- 6. SOMBREADOS Y TÍTULOS DE BANDO --
+    # Volvemos al sombreado simple (dos lados enteros)
     ax.axvspan(-x_limit, 0, color=c_dusk_blue, alpha=0.12, zorder=0)
     ax.axvspan(0, x_limit, color=c_sandy_brown, alpha=0.12, zorder=0)
 
@@ -134,8 +126,8 @@ def generate_butterfly_chart(df):
     # -- 8. TITULO GENERAL --
     fig.suptitle('Las Dos Caras de la Vivienda Social en Chile',
                  fontsize=22, fontweight='black', color=c_deep_walnut, y=1.02, ha='center')
-    ax.set_title('La RM se perfila como una trampa de aislamiento y violencia extrema, mientras las Regiones concentran la dependencia y pobreza monetaria.',
-                 fontsize=12, color=c_deep_walnut, pad=25, style='italic', alpha=0.8)
+                 
+    # Subtítulo eliminado según solicitud.
 
     plt.tight_layout()
     output_path = 'test/outputs/butterfly_chart_clean.png'
