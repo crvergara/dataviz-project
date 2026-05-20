@@ -3,11 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import json
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 from matplotlib.path import Path
 from scipy.stats import gaussian_kde
+from matplotlib.colors import LinearSegmentedColormap, PowerNorm
 
 # ─────────────────────────────────────────────────────────
 # CONFIGURACIÓN GLOBAL Y COLORES (Rubrica: Estética Premium)
@@ -51,6 +53,29 @@ def thin_spines(ax, sides=['bottom', 'left']):
         ax.spines[side].set_visible(True)
         ax.spines[side].set_color(COLOR_ALMOND)
         ax.spines[side].set_alpha(0.4)
+
+def polygon_area(coords):
+    x = coords[:, 0]
+    y = coords[:, 1]
+    return abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2
+
+def geometry_to_mainland_polygons(geometry, min_lon=-80):
+    if geometry["type"] == "Polygon":
+        polygons = [geometry["coordinates"]]
+    elif geometry["type"] == "MultiPolygon":
+        polygons = geometry["coordinates"]
+    else:
+        return []
+
+    pieces = []
+    for polygon in polygons:
+        outer = np.asarray(polygon[0], dtype=float)
+        if outer[:, 0].max() < min_lon:
+            continue
+        if polygon_area(outer) < 0.003:
+            continue
+        pieces.append(outer)
+    return pieces
 
 # ─────────────────────────────────────────────────────────
 # COMPONENTES DE GRÁFICOS
@@ -108,6 +133,59 @@ def plot_quintile_heatmap(ax, df):
     # Etiquetas Y mismo tamaño, discretas
     ax.set_yticklabels(ax.get_yticklabels(), fontweight='bold', fontsize=9)
     ax.tick_params(axis='y', length=0, pad=8)
+
+def plot_social_housing_concentration_map(ax, df, geojson):
+    """Mapa regional: concentracion nacional de viviendas subsidiadas."""
+    national_subsidized = df.loc[df["grupo_vivienda"].eq("Subsidiada"), "expr"].sum()
+    region_shares = {}
+    for region_code, region_df in df.groupby("region"):
+        subsidized_weight = region_df.loc[region_df["grupo_vivienda"].eq("Subsidiada"), "expr"].sum()
+        region_shares[int(region_code)] = subsidized_weight / national_subsidized * 100
+
+    cmap = LinearSegmentedColormap.from_list(
+        "concentration",
+        ["#f6dfc2", "#f2b77d", COLOR_RM, COLOR_WARM],
+    )
+    max_share = max(region_shares.values())
+    norm = PowerNorm(gamma=0.55, vmin=0, vmax=max_share)
+
+    ax.set_xlim(-75.6, -66.5)
+    ax.set_ylim(-56.4, -17.0)
+    # En la infografia el mapa funciona como columna visual; se permite
+    # una leve deformacion para que use todo el alto asignado.
+    ax.set_aspect("auto")
+    ax.set_anchor("NW")
+    ax.axis("off")
+
+    for feature in geojson["features"]:
+        region_code = int(feature["properties"]["codregion"])
+        facecolor = cmap(norm(region_shares[region_code]))
+        for coords in geometry_to_mainland_polygons(feature["geometry"]):
+            ax.add_patch(
+                patches.Polygon(
+                    coords,
+                    closed=True,
+                    facecolor=facecolor,
+                    edgecolor=COLOR_BG,
+                    linewidth=0.42,
+                    joinstyle="round",
+                    zorder=2,
+                )
+            )
+
+    ax.set_title("1. Concentración nacional de\nViviendas Sociales (%)",
+                 fontsize=11, fontweight="black", color=COLOR_TEXT, loc="left", pad=8)
+
+    cax = ax.inset_axes([0.86, 0.30, 0.035, 0.36])
+    gradient = np.linspace(norm.vmin, norm.vmax, 256).reshape(-1, 1)
+    cax.imshow(gradient, aspect="auto", cmap=cmap, norm=norm, origin="lower")
+    cax.axis("off")
+    cax.text(1.35, 0.0, "0%", transform=cax.transAxes, ha="left", va="bottom",
+             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
+    cax.text(1.35, 0.5, f"{max_share / 2:.0f}%", transform=cax.transAxes, ha="left", va="center",
+             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
+    cax.text(1.35, 1.0, f"{max_share:.0f}%", transform=cax.transAxes, ha="left", va="top",
+             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
 
 def plot_butterfly_gaps(ax, df):
     """Lógica de plot_diverging_bar.py: Comparación RM vs Regiones"""
@@ -209,6 +287,67 @@ def plot_historical_line(ax, df_hist):
     
     ax.legend(loc='upper left', frameon=False, facecolor='none', edgecolor='none', fontsize=9)
 
+def plot_radar_rm_vs_regions(ax, df):
+    """Radar compacto: RM vs regiones en viviendas subsidiadas."""
+    df_sub = df[df['grupo_vivienda'] == 'Subsidiada'].copy()
+
+    df_sub['dim_multidim'] = np.where(df_sub['pobreza_multi'] == 1, 1, 0)
+    df_sub['dim_hacinamiento'] = np.where(df_sub['ind_hacina'] >= 2, 1, 0)
+    df_sub['dim_balaceras'] = np.where(df_sub['v36e'] >= 3, 1, 0)
+    df_sub['dim_narco'] = np.where(df_sub['v36c'] >= 3, 1, 0)
+    df_sub['dim_alumbrado'] = np.where(df_sub['v35a'] == 2, 1, 0)
+    df_sub['dim_basura'] = np.where(df_sub['v35c'] == 2, 1, 0)
+
+    dimensions = [
+        'dim_multidim',
+        'dim_hacinamiento',
+        'dim_balaceras',
+        'dim_narco',
+        'dim_alumbrado',
+        'dim_basura'
+    ]
+    labels = ['Pobreza\nmulti', 'Hacinam.', 'Balaceras', 'Narco', 'Sin\nluz', 'Basura']
+
+    def wpct(data, dim):
+        w = data['expr'].sum()
+        return (data.loc[data[dim] == 1, 'expr'].sum() / w * 100) if w > 0 else 0
+
+    df_rm = df_sub[df_sub['region'] == 13]
+    df_re = df_sub[df_sub['region'] != 13]
+    vals_rm = [wpct(df_rm, dim) for dim in dimensions]
+    vals_re = [wpct(df_re, dim) for dim in dimensions]
+
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+    vals_rm += vals_rm[:1]
+    vals_re += vals_re[:1]
+
+    ax.set_facecolor(COLOR_BG)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+
+    ax.plot(angles, vals_re, color=COLOR_RESTO, linewidth=1.7, marker='o',
+            markersize=3.2, label='Regiones', zorder=3)
+    ax.fill(angles, vals_re, color=COLOR_RESTO, alpha=0.16, zorder=2)
+    ax.plot(angles, vals_rm, color=COLOR_RM, linewidth=1.9, marker='o',
+            markersize=3.2, label='Santiago (RM)', zorder=4)
+    ax.fill(angles, vals_rm, color=COLOR_RM, alpha=0.18, zorder=2)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, fontsize=5.5, fontweight='bold', color=COLOR_TEXT)
+    ax.tick_params(axis='x', pad=2)
+    ax.set_ylim(0, 40)
+    ax.set_yticks([10, 20, 30])
+    ax.set_yticklabels(['10%', '20%', '30%'], fontsize=5.2, color=COLOR_ALMOND)
+    ax.set_rlabel_position(78)
+    ax.grid(color=COLOR_ALMOND, linestyle='--', linewidth=0.6, alpha=0.36)
+    ax.spines['polar'].set_visible(False)
+
+    ax.set_title("4. Perfil RM vs\nRegiones (%)",
+                 fontsize=8.5, fontweight='black', color=COLOR_TEXT, pad=10)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.17), ncol=2,
+              frameon=False, fontsize=5.7, handlelength=1.4, columnspacing=0.8)
+
 def plot_waffle_vulnerability(ax, df):
     """Lógica de plot_waffle_final.py: Vulnerabilidad compuesta con casitas"""
     df_sub = df[df['grupo_vivienda'] == 'Subsidiada'].copy()
@@ -239,7 +378,7 @@ def plot_waffle_vulnerability(ax, df):
     house_path = Path(verts, codes)
 
     ax.scatter(x_coords, y_coords, s=360, c=colors_list, marker=house_path, alpha=0.9, edgecolors='none', zorder=3)
-    ax.text(-0.35, 15.50, "4. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
+    ax.text(-0.35, 15.50, "5. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
             ha='left', va='top', fontsize=11, fontweight='black', color=COLOR_TEXT)
     
     # Eje de leyenda bien a la derecha para no competir con las casitas
@@ -282,38 +421,53 @@ def generate_infographic():
     print("Cargando datos...")
     df_master = pd.read_parquet("data/processed/master_dataset.parquet")
     df_hist = pd.read_parquet("data/processed/balaceras_historico_zonas.parquet")
+    with open("data/raw/regiones.json", encoding="utf-8-sig") as file:
+        geojson_regions = json.load(file)
     
     # Ajustar márgenes para darle más espacio útil y alinear los paneles
     fig = plt.figure(figsize=(8.27, 11.69), facecolor=COLOR_BG)
-    gs = gridspec.GridSpec(4, 2, figure=fig, height_ratios=[0.07, 0.28, 0.40, 0.31], 
-                           hspace=0.24, wspace=0.18, left=0.055, right=0.955, top=0.965, bottom=0.045)
+    outer = gridspec.GridSpec(
+        2, 1, figure=fig,
+        height_ratios=[0.06, 0.94],
+        hspace=0.03,
+        left=0.055, right=0.955, top=0.965, bottom=0.045
+    )
+    gs = gridspec.GridSpecFromSubplotSpec(
+        3, 3,
+        subplot_spec=outer[1],
+        width_ratios=[0.58, 1, 1],
+        height_ratios=[0.32, 0.31, 0.37],
+        hspace=0.32,
+        wspace=0.24,
+    )
     
     # 1. HEADER
-    ax_head = fig.add_subplot(gs[0, :])
+    ax_head = fig.add_subplot(outer[0])
     ax_head.axis('off')
-    ax_head.text(0.5, 0.7, "VIVIENDAS SOCIALES EN CHILE", fontsize=20, fontweight='black', ha='center', color=COLOR_TEXT)
+    ax_head.text(0.5, 0.78, "VIVIENDAS SOCIALES EN CHILE", fontsize=20, fontweight='black', ha='center', color=COLOR_TEXT)
     
-    # 2. PLOT 1 (HEATMAP)
-    ax1 = fig.add_subplot(gs[1, :])
-    plot_quintile_heatmap(ax1, df_master)
+    # 2. PLOT 1 (MAPA GEO - COLUMNA 1 COMPLETA)
+    ax1 = fig.add_subplot(gs[:, 0])
+    plot_social_housing_concentration_map(ax1, df_master, geojson_regions)
+    # Heatmap anterior, dejado como alternativa:
+    # ax1 = fig.add_subplot(gs[0, 1:])
+    # plot_quintile_heatmap(ax1, df_master)
     
-    # 3. PLOT 2 (BUTTERFLY CHART - IZQUIERDA)
-    ax2 = fig.add_subplot(gs[2, 0])
+    # 3. PLOT 2 (BUTTERFLY CHART - FILA 1, COLUMNAS 2-3)
+    ax2 = fig.add_subplot(gs[0, 1:])
     plot_butterfly_gaps(ax2, df_master)
     
-    pos = ax2.get_position()
-    ax2.set_position([pos.x0-0.06,
-                      pos.y0 - 0.04, 
-                      pos.width , 
-                      pos.height + 0.08])  
-    
-    # 4. PLOT 3 (LINE CHART - DERECHA)
-    ax3 = fig.add_subplot(gs[2, 1])
+    # 4. PLOT 3 (LINE CHART - FILA 2, COLUMNA 2)
+    ax3 = fig.add_subplot(gs[1, 1])
     plot_historical_line(ax3, df_hist)
+
+    # 5. PLOT 4 (RADAR - FILA 2, COLUMNA 3)
+    ax4 = fig.add_subplot(gs[1, 2], projection='polar')
+    plot_radar_rm_vs_regions(ax4, df_master)
     
-    # 5. PLOT 4 (WAFFLE CHART)
-    ax4 = fig.add_subplot(gs[3, :])
-    plot_waffle_vulnerability(ax4, df_master)
+    # 6. PLOT 5 (WAFFLE CHART - FILA 3, COLUMNAS 2-3)
+    ax5 = fig.add_subplot(gs[2, 1:])
+    plot_waffle_vulnerability(ax5, df_master)
     
     # Línea decorativa inferior
     fig.text(0.5, 0.02, "Fuente: Elaboración propia basada en CASEN 2024 y Censo 2024 · Universidad de Concepción", 
