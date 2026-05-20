@@ -187,7 +187,112 @@ def plot_social_housing_concentration_map(ax, df, geojson):
     cax.text(1.35, 1.0, f"{max_share:.0f}%", transform=cax.transAxes, ha="left", va="top",
              fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
 
-def plot_butterfly_gaps(ax, df):
+def read_ds49_region_totals(path="data/raw/SUDS49Mar2026.xlsx"):
+    """Lee totales regionales DS49 desde la planilla MINVU."""
+    raw = pd.read_excel(path, sheet_name="Total", header=None)
+
+    first_col = raw.iloc[:, 0].astype(str).str.strip()
+    header_idx = first_col[first_col.str.startswith("Regi")].index[0]
+    year_row_idx = header_idx + 1
+
+    year_cols = []
+    years = []
+    for col in raw.columns:
+        value = raw.iat[year_row_idx, col]
+        if pd.isna(value):
+            continue
+        try:
+            year = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 2012 <= year <= 2026:
+            year_cols.append(col)
+            years.append(year)
+
+    data = raw.iloc[year_row_idx + 1:].copy()
+    data = data[data.iloc[:, 0].notna()]
+    data = data[~data.iloc[:, 0].astype(str).str.startswith(("FUENTE", "NOTAS", "\xa0"))]
+
+    totals = data.iloc[:, [0] + year_cols].copy()
+    totals.columns = ["region"] + years
+    totals["region"] = totals["region"].astype(str).str.strip()
+
+    for year in years:
+        totals[year] = pd.to_numeric(totals[year], errors="coerce").fillna(0)
+
+    return totals
+
+def prepare_ds49_yoy(totals):
+    years = [col for col in totals.columns if isinstance(col, int) and col <= 2025]
+    valid_regions = totals[
+        ~totals["region"].str.startswith("Total Pa")
+        & ~totals["region"].str.startswith("Sin Informaci")
+    ]
+
+    rm = valid_regions[valid_regions["region"].eq("Metropolitana")][years].iloc[0]
+    regions = valid_regions[valid_regions["region"].ne("Metropolitana")][years].sum()
+
+    wide = pd.DataFrame(
+        {
+            "year": years,
+            "Santiago (RM)": rm.to_numpy(),
+            "Regiones": regions.to_numpy(),
+        }
+    )
+
+    long = wide.melt(id_vars="year", var_name="zona", value_name="beneficiados")
+    long["yoy_pct"] = long.groupby("zona")["beneficiados"].pct_change() * 100
+    return long.dropna(subset=["yoy_pct"])
+
+def plot_ds49_yoy_growth(ax, data):
+    palette = {"Santiago (RM)": COLOR_RM, "Regiones": COLOR_RESTO}
+
+    sns.lineplot(
+        data=data,
+        x="year",
+        y="yoy_pct",
+        hue="zona",
+        palette=palette,
+        marker="o",
+        markersize=5.2,
+        linewidth=2.45,
+        ax=ax,
+        zorder=3,
+    )
+
+    ax.axhline(0, color=COLOR_TEXT, linewidth=0.95, alpha=0.52, zorder=1)
+    ax.text(1.0, 1.125, "2. Beneficiados DS49: crecimiento interanual (%)",
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=11, fontweight='black', color=COLOR_TEXT)
+    ax.text(1.0, 1.075, "Santiago (RM) vs regiones, 2013-2025",
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=7.5, color=COLOR_TEXT, alpha=0.78)
+
+    ax.set_ylim(-85, 210)
+    ax.set_yticks([-50, 0, 50, 100, 150, 200])
+    ax.set_xticks(sorted(data["year"].unique()))
+    ax.set_xticklabels([str(int(y)) for y in sorted(data["year"].unique())], fontsize=6.8)
+    ax.tick_params(axis='y', labelsize=7.2, length=0)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.yaxis.grid(True, linestyle='--', alpha=0.30, color=COLOR_ALMOND)
+    ax.xaxis.grid(False)
+    thin_spines(ax, ['bottom'])
+
+    label_years = [2017, 2021, 2023, 2025]
+    for _, row in data[data["year"].isin(label_years)].iterrows():
+        color = palette[row["zona"]]
+        offset = 8 if row["yoy_pct"] >= 0 else -10
+        va = "bottom" if row["yoy_pct"] >= 0 else "top"
+        ax.text(row["year"], row["yoy_pct"] + offset, f"{row['yoy_pct']:+.0f}%",
+                ha="center", va=va, fontsize=6.8, fontweight="black", color=color)
+
+    legend = ax.legend(title=None, loc="upper left", bbox_to_anchor=(0.01, 0.91),
+                       frameon=False, fontsize=7.8, handlelength=1.8)
+    for text in legend.get_texts():
+        text.set_color(COLOR_TEXT)
+
+def plot_butterfly_gaps(ax, df, compact=False):
     """Lógica de plot_diverging_bar.py: Comparación RM vs Regiones"""
     df['Viaje Crítico (>1h)']     = np.where(df['o28a_hr'] >= 1, 1, 0)
     df['Balaceras Frecuentes']    = np.where(df['v36b'] >= 3, 1, 0)
@@ -215,17 +320,32 @@ def plot_butterfly_gaps(ax, df):
         rows.append({'Variable': var, 'RM': wpct(df_rm, var), 'RE': wpct(df_re, var)})
     
     plot_df = pd.DataFrame(rows)
-    row_gap = 1.28
-    bar_h = 0.68 # Barras más gruesas
+    row_gap = 1.18 if compact else 1.28
+    bar_h = 0.58 if compact else 0.68
+    label_fs = 5.6 if compact else 8
+    value_fs = 7.4 if compact else 11
+    header_fs = 7.8 if compact else 12
+    title_fs = 8.3 if compact else 11
+    label_map = {
+        'Ingreso Autónomo <$600k': 'INGRESO <$600K',
+        'Alta Dependencia (>20%)': 'DEPENDENCIA >20%',
+        'Viaje Crítico (>1h)': 'VIAJE >1H',
+        'Narco-tráfico Frecuente': 'NARCO FRECUENTE',
+        'Balaceras Frecuentes': 'BALACERAS',
+    }
     
     for i, row in plot_df.iterrows():
         y = i * row_gap
         ax.barh(y, -row['RE'], color=COLOR_RESTO, height=bar_h, zorder=3)
         ax.barh(y, row['RM'], color=COLOR_RM, height=bar_h, zorder=3)
         
-        ax.text(0, y + 0.46, row['Variable'].upper(), ha='center', va='bottom', fontsize=8, fontweight='bold', color=COLOR_TEXT)
-        ax.text(-row['RE'] - 2, y, f"{row['RE']:.0f}%", ha='right', va='center', color=COLOR_RESTO, fontsize=11, fontweight='black')
-        ax.text(row['RM'] + 2, y, f"{row['RM']:.0f}%", ha='left', va='center', color=COLOR_RM, fontsize=11, fontweight='black')
+        label = label_map[row['Variable']] if compact else row['Variable'].upper()
+        ax.text(0, y + (0.38 if compact else 0.46), label,
+                ha='center', va='bottom', fontsize=label_fs, fontweight='bold', color=COLOR_TEXT)
+        ax.text(-row['RE'] - (1.4 if compact else 2), y, f"{row['RE']:.0f}%",
+                ha='right', va='center', color=COLOR_RESTO, fontsize=value_fs, fontweight='black')
+        ax.text(row['RM'] + (1.4 if compact else 2), y, f"{row['RM']:.0f}%",
+                ha='left', va='center', color=COLOR_RM, fontsize=value_fs, fontweight='black')
 
     top_y = (len(vars_to_plot) - 1) * row_gap
     ax.vlines(0, ymin=-0.45, ymax=top_y + 0.82, color=COLOR_TEXT, lw=1.5, alpha=0.5)
@@ -237,14 +357,16 @@ def plot_butterfly_gaps(ax, df):
     ax.set_yticks([])
     ax.axis('off')
     
-    ax.text(-lim * 0.55 +8, top_y + 1.12, 'REGIONES',
-        ha='center', color=COLOR_RESTO, fontsize=12, fontweight='black')
+    ax.text(-lim * 0.55 + (5.5 if compact else 8), top_y + (0.96 if compact else 1.12), 'REGIONES',
+        ha='center', color=COLOR_RESTO, fontsize=header_fs, fontweight='black')
 
-    ax.text(lim * 0.55, top_y + 1.12, 'SANTIAGO (RM)',
-        ha='center', color=COLOR_RM, fontsize=12, fontweight='black')
+    ax.text(lim * 0.55, top_y + (0.96 if compact else 1.12), 'SANTIAGO (RM)',
+        ha='center', color=COLOR_RM, fontsize=header_fs, fontweight='black')
     # Subtítulo indicando qué población se compara
-    ax.text(-lim * 0.7, top_y + 2.72, "2. Brechas territoriales en\nViviendas Subsidiadas (%)",
-            ha='left', va='top', fontsize=11, fontweight='black', color=COLOR_TEXT)
+    title_num = "6." if compact else "2."
+    ax.text(-lim * (0.92 if compact else 0.7), top_y + (2.36 if compact else 2.72),
+            f"{title_num} Brechas territoriales en\nViviendas Subsidiadas (%)",
+            ha='left', va='top', fontsize=title_fs, fontweight='black', color=COLOR_TEXT)
 
 def plot_historical_line(ax, df_hist):
     """Lógica de Grafico3.py: Evolución de balaceras"""
@@ -348,6 +470,99 @@ def plot_radar_rm_vs_regions(ax, df):
     ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.17), ncol=2,
               frameon=False, fontsize=5.7, handlelength=1.4, columnspacing=0.8)
 
+def plot_donut_vulnerability(ax, df):
+    """Dona compacta: desglose de vulnerabilidad estructural en viviendas subsidiadas."""
+    df_sub = df[df['grupo_vivienda'] == 'Subsidiada'].copy()
+    df_sub['trampa_violencia'] = np.where((df_sub['v36b'] >= 3) | (df_sub['v36c'] >= 3), 1, 0)
+    df_sub['trampa_economica'] = np.where((df_sub['yautcorh'] < 600000) | (df_sub['subsidy_ratio'] > 0.20), 1, 0)
+
+    def wpct(mask):
+        w = df_sub['expr'].sum()
+        return (df_sub[mask]['expr'].sum() / w * 100) if w > 0 else 0
+
+    pct_ambas = round(wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 1)))
+    pct_solo_v = round(wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 0)))
+    pct_solo_e = round(wpct((df_sub['trampa_violencia'] == 0) & (df_sub['trampa_economica'] == 1)))
+    pct_ninguna = 100 - (pct_ambas + pct_solo_v + pct_solo_e)
+    pct_fallo = pct_ambas + pct_solo_v + pct_solo_e
+
+    values = [pct_ambas, pct_solo_v, pct_solo_e, pct_ninguna]
+    labels = [
+        "Violencia + economía",
+        "Entorno violento",
+        "Presión económica",
+        "Sin vulnerabilidad\nsevera",
+    ]
+    colors = ["#a94f24", "#c7662f", "#e07b3a", COLOR_RESTO]
+
+    ax.set_title("5. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
+                 fontsize=8.6, fontweight='black', color=COLOR_TEXT, loc='left', pad=7)
+
+    ax.pie(
+        [pct_fallo, 100 - pct_fallo],
+        colors=["#e07b3a", (0, 0, 0, 0)],
+        startangle=94,
+        counterclock=False,
+        radius=0.88,
+        wedgeprops=dict(width=0.018, edgecolor="none"),
+    )
+
+    wedges, _ = ax.pie(
+        values,
+        colors=colors,
+        startangle=94,
+        counterclock=False,
+        radius=0.80,
+        wedgeprops=dict(width=0.32, edgecolor=COLOR_BG, linewidth=2.5),
+    )
+    wedges[-1].set_edgecolor(COLOR_BG)
+    wedges[-1].set_linewidth(2.5)
+
+    ax.text(0, 0.08, f"{pct_fallo}%", ha='center', va='center',
+            fontsize=18, fontweight='black', color=COLOR_TEXT)
+    ax.text(0, -0.15, "Vulnerabilidad\nestructural", ha='center', va='center',
+            fontsize=6.8, fontweight='bold', color=COLOR_TEXT, linespacing=1.05)
+
+    label_positions = [
+        (0.72, 0.86, "left", 0.50, 0.86),
+        (1.02, 0.18, "left", 0.86, 0.18),
+        (0.55, -1.14, "center", 0.03, -1.00),
+        (-1.08, 0.36, "right", -0.86, 0.36),
+    ]
+    for wedge, value, label, color, (tx, ty, ha, elbow_x, elbow_y) in zip(wedges, values, labels, colors, label_positions):
+        angle_deg = (wedge.theta1 + wedge.theta2) / 2
+        angle = np.deg2rad(angle_deg)
+        x = np.cos(angle) * (0.88 if not label.startswith("Sin") else 0.88)
+        y = np.sin(angle) * (0.88 if not label.startswith("Sin") else 0.88)
+        text_color = COLOR_RESTO if label.startswith("Sin") else color
+        line_end_x = tx - 0.04 if ha == "left" else tx + 0.04 if ha == "right" else tx
+        line_end_y = ty if ha != "center" else ty + 0.10
+        ax.plot(
+            [x, elbow_x, line_end_x],
+            [y, elbow_y, line_end_y],
+            color="#8a7b61",
+            lw=0.8,
+            alpha=0.85,
+            solid_capstyle="round",
+            zorder=5,
+        )
+        ax.text(
+            tx,
+            ty,
+            f"{value}%\n{label}",
+            ha=ha,
+            va="center",
+            fontsize=6.5,
+            fontweight="black",
+            color=text_color,
+            linespacing=1.05,
+        )
+
+    ax.set_aspect('equal')
+    ax.set_xlim(-1.26, 1.26)
+    ax.set_ylim(-1.12, 1.12)
+    ax.axis('off')
+
 def plot_waffle_vulnerability(ax, df):
     """Lógica de plot_waffle_final.py: Vulnerabilidad compuesta con casitas"""
     df_sub = df[df['grupo_vivienda'] == 'Subsidiada'].copy()
@@ -421,6 +636,7 @@ def generate_infographic():
     print("Cargando datos...")
     df_master = pd.read_parquet("data/processed/master_dataset.parquet")
     df_hist = pd.read_parquet("data/processed/balaceras_historico_zonas.parquet")
+    df_ds49 = prepare_ds49_yoy(read_ds49_region_totals())
     with open("data/raw/regiones.json", encoding="utf-8-sig") as file:
         geojson_regions = json.load(file)
     
@@ -453,9 +669,9 @@ def generate_infographic():
     # ax1 = fig.add_subplot(gs[0, 1:])
     # plot_quintile_heatmap(ax1, df_master)
     
-    # 3. PLOT 2 (BUTTERFLY CHART - FILA 1, COLUMNAS 2-3)
+    # 3. PLOT 2 (CRECIMIENTO DS49 - FILA 1, COLUMNAS 2-3)
     ax2 = fig.add_subplot(gs[0, 1:])
-    plot_butterfly_gaps(ax2, df_master)
+    plot_ds49_yoy_growth(ax2, df_ds49)
     
     # 4. PLOT 3 (LINE CHART - FILA 2, COLUMNA 2)
     ax3 = fig.add_subplot(gs[1, 1])
@@ -465,12 +681,16 @@ def generate_infographic():
     ax4 = fig.add_subplot(gs[1, 2], projection='polar')
     plot_radar_rm_vs_regions(ax4, df_master)
     
-    # 6. PLOT 5 (WAFFLE CHART - FILA 3, COLUMNAS 2-3)
-    ax5 = fig.add_subplot(gs[2, 1:])
-    plot_waffle_vulnerability(ax5, df_master)
+    # 6. PLOT 5 (DONA - FILA 3, COLUMNA 2)
+    ax5 = fig.add_subplot(gs[2, 1])
+    plot_donut_vulnerability(ax5, df_master)
+
+    # 7. BUTTERFLY CHART - FILA 3, COLUMNA 3
+    ax6 = fig.add_subplot(gs[2, 2])
+    plot_butterfly_gaps(ax6, df_master, compact=True)
     
     # Línea decorativa inferior
-    fig.text(0.5, 0.02, "Fuente: Elaboración propia basada en CASEN 2024 y Censo 2024 · Universidad de Concepción", 
+    fig.text(0.5, 0.02, "Fuente: Elaboración propia basada en CASEN 2024, Censo 2024 y MINVU DS49 · Universidad de Concepción", 
              ha='center', fontsize=8, color=COLOR_ALMOND)
 
     # Guardar
