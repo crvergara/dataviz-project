@@ -211,6 +211,13 @@ data/raw/*.dta
 data/raw/*.csv
 data/raw/*.zip
 data/raw/*.crdownload
-data/
+data/raw/*.xlsx
+data/raw/*.parquet
+data/raw/*.json
+data/processed/
+data/*.xlsx
 deliverables/
 data_explorer/
+
+!data/raw/SUDS49-ComunasMar2026.xlsx
+!data/raw/SUDS49Mar2026.xlsx
