@@ -9,7 +9,7 @@ import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 from matplotlib.path import Path
 from scipy.stats import gaussian_kde
-from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 # ─────────────────────────────────────────────────────────
 # CONFIGURACIÓN GLOBAL Y COLORES (Rubrica: Estética Premium)
@@ -21,6 +21,25 @@ COLOR_RESTO  = '#3c4f76'       # Dusk Blue (Azul)
 COLOR_ALMOND = '#d38b5d'       # Toasted Almond 
 COLOR_WARM   = '#d35400'       # Terracota
 TITLE_FS     = 9.5
+
+REGION_NAMES = {
+    1: "Tarapacá",
+    2: "Antofagasta",
+    3: "Atacama",
+    4: "Coquimbo",
+    5: "Valparaíso",
+    6: "O'Higgins",
+    7: "Maule",
+    8: "Biobío",
+    9: "Araucanía",
+    10: "Los Lagos",
+    11: "Aysén",
+    12: "Magallanes",
+    13: "Metropolitana",
+    14: "Los Ríos",
+    15: "Arica y Parinacota",
+    16: "Ñuble",
+}
 
 plt.rcParams.update({
     'font.family': 'sans-serif',
@@ -77,6 +96,80 @@ def geometry_to_mainland_polygons(geometry, min_lon=-80):
             continue
         pieces.append(outer)
     return pieces
+
+def build_regional_vulnerability_metrics(df):
+    df_sub = df[df["grupo_vivienda"].eq("Subsidiada")].copy()
+    df_sub["trampa_violencia"] = np.where((df_sub["v36b"] >= 3) | (df_sub["v36c"] >= 3), 1, 0)
+    df_sub["trampa_economica"] = np.where(
+        (df_sub["yautcorh"] < 600000) | (df_sub["subsidy_ratio"] > 0.20),
+        1,
+        0,
+    )
+    df_sub["vulnerabilidad_estructural"] = np.where(
+        (df_sub["trampa_violencia"] == 1) | (df_sub["trampa_economica"] == 1),
+        1,
+        0,
+    )
+
+    rows = []
+    for region_code, region_df in df_sub.groupby("region"):
+        total_weight = region_df["expr"].sum()
+        vulnerable_weight = region_df.loc[region_df["vulnerabilidad_estructural"].eq(1), "expr"].sum()
+        pct = vulnerable_weight / total_weight * 100 if total_weight > 0 else np.nan
+        rows.append({
+            "region": int(region_code),
+            "region_name": REGION_NAMES.get(int(region_code), str(region_code)),
+            "pct_vulnerabilidad": pct,
+        })
+
+    return pd.DataFrame(rows).sort_values("pct_vulnerabilidad", ascending=False)
+
+def build_queen_weights(geojson, decimals=4):
+    region_vertices = {}
+
+    for feature in geojson["features"]:
+        region_code = int(feature["properties"]["codregion"])
+        vertices = set()
+        for coords in geometry_to_mainland_polygons(feature["geometry"]):
+            rounded = np.round(coords, decimals=decimals)
+            vertices.update(map(tuple, rounded))
+        region_vertices[region_code] = vertices
+
+    regions = sorted(region_vertices)
+    weights = np.zeros((len(regions), len(regions)), dtype=float)
+
+    for i, region_i in enumerate(regions):
+        for j, region_j in enumerate(regions):
+            if j <= i:
+                continue
+            if region_vertices[region_i].intersection(region_vertices[region_j]):
+                weights[i, j] = 1
+                weights[j, i] = 1
+
+    return regions, weights
+
+def morans_i(values, weights, permutations=9999, seed=42):
+    values = np.asarray(values, dtype=float)
+    centered = values - values.mean()
+    n = len(values)
+    s0 = weights.sum()
+
+    observed = (n / s0) * ((weights * np.outer(centered, centered)).sum() / (centered @ centered))
+
+    rng = np.random.default_rng(seed)
+    permuted = np.empty(permutations)
+    for i in range(permutations):
+        shuffled = rng.permutation(centered)
+        permuted[i] = (n / s0) * ((weights * np.outer(shuffled, shuffled)).sum() / (shuffled @ shuffled))
+
+    p_positive = (np.sum(permuted >= observed) + 1) / (permutations + 1)
+    return observed, p_positive
+
+def calculate_spatial_autocorrelation(metrics, geojson):
+    regions, weights = build_queen_weights(geojson)
+    metric_lookup = metrics.set_index("region")["pct_vulnerabilidad"].to_dict()
+    values = [metric_lookup[region] for region in regions]
+    return morans_i(values, weights)
 
 # ─────────────────────────────────────────────────────────
 # COMPONENTES DE GRÁFICOS
@@ -135,22 +228,31 @@ def plot_quintile_heatmap(ax, df):
     ax.set_yticklabels(ax.get_yticklabels(), fontweight='bold', fontsize=9)
     ax.tick_params(axis='y', length=0, pad=8)
 
-def plot_social_housing_concentration_map(ax, df, geojson):
-    """Mapa regional: concentracion nacional de viviendas subsidiadas."""
-    national_subsidized = df.loc[df["grupo_vivienda"].eq("Subsidiada"), "expr"].sum()
-    region_shares = {}
-    for region_code, region_df in df.groupby("region"):
-        subsidized_weight = region_df.loc[region_df["grupo_vivienda"].eq("Subsidiada"), "expr"].sum()
-        region_shares[int(region_code)] = subsidized_weight / national_subsidized * 100
+def plot_regional_vulnerability_map(ax, df, geojson):
+    """Mapa regional: tasa interna de vulnerabilidad en viviendas subsidiadas."""
+    metrics = build_regional_vulnerability_metrics(df)
+    moran_i, moran_p = calculate_spatial_autocorrelation(metrics, geojson)
+    metric_lookup = metrics.set_index("region")["pct_vulnerabilidad"].to_dict()
 
-    cmap = LinearSegmentedColormap.from_list(
-        "concentration",
-        ["#f6dfc2", "#f2b77d", COLOR_RM, COLOR_WARM],
+    boundaries = np.linspace(39, 70, 11)
+    cmap = ListedColormap(
+        [
+            "#ead8b8",
+            "#f0c997",
+            "#f4ba75",
+            "#f2a85c",
+            "#ee9445",
+            "#e77f33",
+            "#d96a2b",
+            "#c45725",
+            "#a94620",
+            "#823519",
+        ],
+        name="vulnerability_steps",
     )
-    max_share = max(region_shares.values())
-    norm = PowerNorm(gamma=0.55, vmin=0, vmax=max_share)
+    norm = BoundaryNorm(boundaries, cmap.N, clip=True)
 
-    ax.set_xlim(-75.6, -66.5)
+    ax.set_xlim(-76.2, -66.5)
     ax.set_ylim(-56.4, -17.0)
     # En la infografia el mapa funciona como columna visual; se permite
     # una leve deformacion para que use todo el alto asignado.
@@ -160,33 +262,44 @@ def plot_social_housing_concentration_map(ax, df, geojson):
 
     for feature in geojson["features"]:
         region_code = int(feature["properties"]["codregion"])
-        facecolor = cmap(norm(region_shares[region_code]))
+        value = metric_lookup.get(region_code, np.nan)
+        facecolor = "#ddd6c7" if np.isnan(value) else cmap(norm(value))
         for coords in geometry_to_mainland_polygons(feature["geometry"]):
             ax.add_patch(
                 patches.Polygon(
                     coords,
                     closed=True,
                     facecolor=facecolor,
-                    edgecolor=COLOR_BG,
-                    linewidth=0.42,
+                    edgecolor="#fff8ea",
+                    linewidth=0.48,
                     joinstyle="round",
                     zorder=2,
                 )
             )
 
-    ax.set_title("1. Concentración nacional de\nViviendas Sociales (%)",
+    ax.set_title("1. Vulnerabilidad estructural en\nViviendas Sociales (%)",
                  fontsize=TITLE_FS, fontweight="black", color=COLOR_TEXT, loc="left", pad=8)
+    ax.text(0.0, 0.945, "Tasa regional\nen subsidiadas",
+            transform=ax.transAxes, ha="left", va="top",
+            fontsize=5.7, color=COLOR_TEXT, alpha=0.72, linespacing=1.05)
+    ax.text(0.0, 0.895, f"Moran's I: {moran_i:.2f}\np = {moran_p:.3f}",
+            transform=ax.transAxes, ha="left", va="top",
+            fontsize=5.7, fontweight="bold", color=COLOR_RESTO, linespacing=1.05)
 
-    cax = ax.inset_axes([0.86, 0.30, 0.035, 0.36])
-    gradient = np.linspace(norm.vmin, norm.vmax, 256).reshape(-1, 1)
+    cax = ax.inset_axes([0.78, 0.40, 0.045, 0.24])
+    gradient = np.linspace(boundaries[0], boundaries[-1], 512).reshape(-1, 1)
     cax.imshow(gradient, aspect="auto", cmap=cmap, norm=norm, origin="lower")
     cax.axis("off")
-    cax.text(1.35, 0.0, "0%", transform=cax.transAxes, ha="left", va="bottom",
-             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
-    cax.text(1.35, 0.5, f"{max_share / 2:.0f}%", transform=cax.transAxes, ha="left", va="center",
-             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
-    cax.text(1.35, 1.0, f"{max_share:.0f}%", transform=cax.transAxes, ha="left", va="top",
-             fontsize=6.2, fontweight="bold", color=COLOR_TEXT)
+    cax.text(1.30, 0.00, f"{boundaries[0]:.0f}%", transform=cax.transAxes,
+             ha="left", va="bottom", fontsize=5.6, fontweight="bold", color=COLOR_TEXT)
+    cax.text(1.30, 0.52, "55%", transform=cax.transAxes,
+             ha="left", va="center", fontsize=5.6, fontweight="bold", color=COLOR_TEXT)
+    cax.text(1.30, 1.00, f"{boundaries[-1]:.0f}%+", transform=cax.transAxes,
+             ha="left", va="top", fontsize=5.6, fontweight="bold", color=COLOR_TEXT)
+
+    ax.text(0.78, 0.365, "% regional",
+            transform=ax.transAxes, ha="left", va="top",
+            fontsize=5.5, color=COLOR_TEXT, alpha=0.74)
 
 def read_ds49_region_totals(path="data/raw/SUDS49Mar2026.xlsx"):
     """Lee totales regionales DS49 desde la planilla MINVU."""
@@ -410,23 +523,38 @@ def plot_subsidy_butterfly(ax, df):
     plot_df = pd.DataFrame(rows)
 
     row_gap = 1.05
-    bar_h = 0.47
+    track_max = 42
+    bar_h = 0.13
+    blue_lit = COLOR_RESTO
+    blue_dim = "#6f7fa3"
+    orange_lit = COLOR_RM
+    orange_dim = "#f4b06f"
     top_y = (len(vars_to_plot) - 1) * row_gap
 
     for i, row in plot_df.iterrows():
         y = top_y - i * row_gap
         val_nosub = row['No_Subsidiada']
         val_sub = row['Subsidiada']
+        nosub_wins = val_nosub >= val_sub
+        sub_wins = val_sub >= val_nosub
+        nosub_color = blue_lit if nosub_wins else blue_dim
+        sub_color = orange_lit if sub_wins else orange_dim
 
-        ax.barh(y, -val_nosub, color=COLOR_RESTO, height=bar_h, zorder=3)
-        ax.barh(y, val_sub, color=COLOR_RM, height=bar_h, zorder=3)
+        ax.barh(y, -track_max, left=0, color=COLOR_ALMOND, alpha=0.18,
+                height=bar_h, edgecolor='none', zorder=1)
+        ax.barh(y, track_max, left=0, color=COLOR_ALMOND, alpha=0.18,
+                height=bar_h, edgecolor='none', zorder=1)
+        ax.barh(y, -val_nosub, left=0, color=nosub_color,
+                height=bar_h, edgecolor='none', zorder=3)
+        ax.barh(y, val_sub, left=0, color=sub_color,
+                height=bar_h, edgecolor='none', zorder=3)
 
         ax.text(0, y + 0.34, label_map[row['Variable']], ha='center', va='bottom',
                 color=COLOR_TEXT, fontsize=5.5, fontweight='black', zorder=5)
-        ax.text(-val_nosub - 1.5, y, f"{val_nosub:.0f}%", ha='right', va='center',
-                color=COLOR_RESTO, fontsize=7.5, fontweight='black', zorder=5)
-        ax.text(val_sub + 1.5, y, f"{val_sub:.0f}%", ha='left', va='center',
-                color=COLOR_RM, fontsize=7.5, fontweight='black', zorder=5)
+        txt_nosub = ax.text(-track_max - 2.4, y, f"{val_nosub:.0f}%", ha='right', va='center',
+                color=nosub_color, fontsize=7.5, fontweight='black', zorder=5)
+        txt_sub = ax.text(track_max + 2.4, y, f"{val_sub:.0f}%", ha='left', va='center',
+                color=sub_color, fontsize=7.5, fontweight='black', zorder=5)
 
     ax.text(-12, top_y + 0.60, 'SIN SUBSIDIO', ha='right', va='bottom',
             color=COLOR_RESTO, fontsize=7.9, fontweight='black')
@@ -437,7 +565,7 @@ def plot_subsidy_butterfly(ax, df):
             ha='left', va='top', fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT,
             linespacing=1.05)
 
-    ax.set_xlim(-55, 55)
+    ax.set_xlim(-58, 58)
     ax.set_ylim(-0.75, top_y + 1.72)
     ax.set_yticks([])
     ax.set_xticks([])
@@ -479,7 +607,7 @@ def plot_historical_line(ax, df_hist):
     
     # Título claro del gráfico
     ax.set_title("3. Evolución de balaceras en\nViviendas Subsidiadas (%)",
-                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, loc='left', pad=8)
+                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, loc='left', pad=20)
 
     
     ax.legend(loc='upper left', frameon=False, facecolor='none', edgecolor='none', fontsize=9)
@@ -541,7 +669,7 @@ def plot_radar_rm_vs_regions(ax, df):
     ax.spines['polar'].set_visible(False)
 
     ax.set_title("4. Vulnerabilidades subsidiadas:\nSantiago vs Regiones (%)",
-                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, pad=10)
+                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, pad=2)
     ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.17), ncol=2,
               frameon=False, fontsize=5.7, handlelength=1.4, columnspacing=0.8)
 
@@ -599,8 +727,8 @@ def plot_donut_vulnerability(ax, df):
             fontsize=6.8, fontweight='bold', color=COLOR_TEXT, linespacing=1.05)
 
     label_positions = [
-        (0.72, 0.86, "left", 0.50, 0.86),
-        (1.02, 0.18, "left", 0.86, 0.18),
+        (0.66, 0.94, "left", 0.46, 0.92),
+        (1.02, 0.08, "left", 0.86, 0.08),
         (0.55, -1.14, "center", 0.03, -1.00),
         (-1.08, 0.36, "right", -0.86, 0.36),
     ]
@@ -707,6 +835,68 @@ def plot_waffle_vulnerability(ax, df):
 # ENSAMBLAJE FINAL (A4 Gridspec)
 # ─────────────────────────────────────────────────────────
 
+def draw_justified_paragraph(ax, text, x0, x1, y_top, fontsize=7.2, color=COLOR_TEXT):
+    fig = ax.figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    ax_bbox = ax.get_window_extent(renderer=renderer)
+    target_width = (x1 - x0) * ax_bbox.width
+
+    def text_bbox(label):
+        probe = ax.text(0, 0, label, fontsize=fontsize, color=color, alpha=0)
+        bbox = probe.get_window_extent(renderer=renderer)
+        probe.remove()
+        return bbox
+
+    def text_width(label):
+        return text_bbox(label).width
+
+    words = text.split()
+    lines = []
+    current = []
+    for word in words:
+        candidate = current + [word]
+        if current and text_width(" ".join(candidate)) > target_width:
+            lines.append(current)
+            current = [word]
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+
+    line_height = text_bbox("Hg").height * 1.22 / ax_bbox.height
+    for line_idx, line_words in enumerate(lines):
+        y = y_top - line_idx * line_height
+        is_last = line_idx == len(lines) - 1
+        if len(line_words) == 1 or is_last:
+            ax.text(x0, y, " ".join(line_words), transform=ax.transAxes,
+                    ha="left", va="top", fontsize=fontsize, color=color, alpha=0.9)
+            continue
+
+        words_width = sum(text_width(word) for word in line_words)
+        gap = (target_width - words_width) / (len(line_words) - 1)
+        cursor = x0 * ax_bbox.width
+        for word in line_words:
+            ax.text(cursor / ax_bbox.width, y, word, transform=ax.transAxes,
+                    ha="left", va="top", fontsize=fontsize, color=color, alpha=0.9)
+            cursor += text_width(word) + gap
+
+def add_story_block(fig):
+    """Franja narrativa breve bajo los gráficos."""
+    ax = fig.add_axes([0.075, 0.036, 0.85, 0.060])
+    ax.axis("off")
+    ax.plot([0, 1], [0.98, 0.98], color=COLOR_ALMOND, lw=0.8, alpha=0.38)
+    ax.plot([0, 1], [0.02, 0.02], color=COLOR_ALMOND, lw=0.6, alpha=0.22)
+
+    story = (
+        "La infografía muestra que el acceso a una vivienda subsidiada no siempre implica superar la vulnerabilidad. "
+        "Aunque los beneficiarios DS49 han aumentado en distintos periodos, los hogares en viviendas sociales siguen "
+        "concentrando desventajas estructurales: bajos ingresos, dependencia del subsidio, presencia de barrios vulnerables, "
+        "problemas de seguridad y condiciones territoriales desiguales entre Santiago y regiones. Así, la política habitacional "
+        "logra entregar propiedad, pero no siempre garantiza integración urbana ni mejores oportunidades de vida."
+    )
+    draw_justified_paragraph(ax, story, x0=0.0, x1=1.0, y_top=0.82, fontsize=7.05)
+
 def generate_infographic():
     print("Cargando datos...")
     df_master = pd.read_parquet("data/processed/master_dataset.parquet")
@@ -721,15 +911,15 @@ def generate_infographic():
         2, 1, figure=fig,
         height_ratios=[0.06, 0.94],
         hspace=0.03,
-        left=0.055, right=0.955, top=0.965, bottom=0.045
+        left=0.055, right=0.955, top=0.965, bottom=0.105
     )
     gs = gridspec.GridSpecFromSubplotSpec(
         3, 3,
         subplot_spec=outer[1],
-        width_ratios=[0.58, 1, 1],
+        width_ratios=[0.66, 1, 1],
         height_ratios=[0.32, 0.31, 0.37],
         hspace=0.32,
-        wspace=0.24,
+        wspace=0.22,
     )
     
     # 1. HEADER
@@ -739,7 +929,7 @@ def generate_infographic():
     
     # 2. PLOT 1 (MAPA GEO - COLUMNA 1 COMPLETA)
     ax1 = fig.add_subplot(gs[:, 0])
-    plot_social_housing_concentration_map(ax1, df_master, geojson_regions)
+    plot_regional_vulnerability_map(ax1, df_master, geojson_regions)
     # Heatmap anterior, dejado como alternativa:
     # ax1 = fig.add_subplot(gs[0, 1:])
     # plot_quintile_heatmap(ax1, df_master)
@@ -763,6 +953,8 @@ def generate_infographic():
     # 7. BUTTERFLY CHART - FILA 3, COLUMNA 3
     ax6 = fig.add_subplot(gs[2, 2])
     plot_subsidy_butterfly(ax6, df_master)
+
+    add_story_block(fig)
     
     # Línea decorativa inferior
     fig.text(0.5, 0.025, "DS49: Fondo Solidario de Elección de Vivienda, subsidio habitacional para familias sin vivienda.", 
