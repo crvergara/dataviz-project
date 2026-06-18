@@ -6,3 +6,4 @@ seaborn
 scipy
 pyarrow
 openpyxl
+plotly

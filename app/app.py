@@ -12,6 +12,7 @@ import matplotlib.patches as patches
 from matplotlib.colors import BoundaryNorm, ListedColormap
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import seaborn as sns
 import streamlit as st
 import streamlit.components.v1 as components
@@ -32,6 +33,7 @@ from src.final_infographic import (  # noqa: E402
     build_regional_vulnerability_metrics,
     calculate_spatial_autocorrelation,
     geometry_to_mainland_polygons,
+    polygon_area,
     plot_donut_vulnerability,
     plot_ds49_yoy_growth,
     plot_historical_line,
@@ -130,6 +132,72 @@ CUSTOM_CSS = f"""
         font-size: 0.78rem;
         text-align: center;
         margin: -0.15rem auto 0.75rem;
+    }}
+
+    .hero-panel {{
+        background: #fffaf0;
+        border: 1px solid rgba(211, 139, 93, 0.36);
+        border-radius: 8px;
+        padding: 1.15rem 1.2rem;
+        min-height: 420px;
+        box-shadow: 0 1px 0 rgba(76, 46, 5, 0.05);
+    }}
+
+    .hero-panel-kicker {{
+        color: rgba(76, 46, 5, 0.66);
+        font-size: 0.78rem;
+        font-weight: 900;
+        line-height: 1.15;
+        text-transform: uppercase;
+        margin-bottom: 0.42rem;
+    }}
+
+    .hero-panel-title {{
+        color: {COLOR_TEXT};
+        font-size: 1.55rem;
+        line-height: 1.08;
+        font-weight: 900;
+        margin-bottom: 0.65rem;
+    }}
+
+    .hero-panel-copy {{
+        color: rgba(76, 46, 5, 0.74);
+        font-size: 0.92rem;
+        line-height: 1.42;
+        margin-bottom: 1.0rem;
+    }}
+
+    .hero-panel-value {{
+        color: {COLOR_RM};
+        font-size: 2.35rem;
+        line-height: 1.0;
+        font-weight: 900;
+        margin: 0.55rem 0 0.15rem;
+    }}
+
+    .hero-panel-row {{
+        border-top: 1px solid rgba(211, 139, 93, 0.24);
+        padding-top: 0.72rem;
+        margin-top: 0.72rem;
+        color: rgba(76, 46, 5, 0.76);
+        font-size: 0.86rem;
+        line-height: 1.35;
+    }}
+
+    .map-legend {{
+        height: 10px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #ead8b8, #f2a85c, #d96a2b, #823519);
+        margin: 0.85rem 0 0.32rem;
+        border: 1px solid rgba(76, 46, 5, 0.08);
+    }}
+
+    .legend-scale {{
+        display: flex;
+        justify-content: space-between;
+        color: rgba(76, 46, 5, 0.62);
+        font-size: 0.74rem;
+        font-weight: 800;
     }}
 
     .analysis-title {{
@@ -274,6 +342,10 @@ def fmt_int(value):
 def get_region_options():
     ordered_regions = [REGION_NAMES[code] for code in sorted(REGION_NAMES) if code != 13]
     return ["Chile completo", "Santiago (RM)", "Regiones"] + ordered_regions
+
+
+def region_display_name(region_code):
+    return "Santiago (RM)" if int(region_code) == 13 else REGION_NAMES.get(int(region_code), str(region_code))
 
 
 def territory_to_region_code(selection):
@@ -493,13 +565,11 @@ def vulnerability_color(value):
     return colors[idx]
 
 
-def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
+def build_vertical_chile_svg(metrics, geojson, selected_region=None):
     metric_lookup = metrics.set_index("region")["pct_vulnerabilidad"].to_dict()
     paths = []
     all_x = []
     all_y = []
-    y_scale = 1.04
-    y_center = -71.35
 
     for feature in geojson["features"]:
         region_code = int(feature["properties"]["codregion"])
@@ -510,8 +580,8 @@ def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
 
         for coords in geometry_to_mainland_polygons(feature["geometry"]):
             coords = np.asarray(coords, dtype=float)
-            x = -coords[:, 1]
-            y = ((coords[:, 0] - y_center) * y_scale) + y_center
+            x = coords[:, 0]
+            y = -coords[:, 1]
             all_x.extend(x.tolist())
             all_y.extend(y.tolist())
             commands = [f"M {x[0]:.3f} {y[0]:.3f}"]
@@ -536,8 +606,8 @@ def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
 
     x_min, x_max = min(all_x), max(all_x)
     y_min, y_max = min(all_y), max(all_y)
-    pad_x = (x_max - x_min) * 0.035
-    pad_y = (y_max - y_min) * 0.20
+    pad_x = (x_max - x_min) * 0.18
+    pad_y = (y_max - y_min) * 0.035
     view_box = f"{x_min - pad_x:.2f} {y_min - pad_y:.2f} {(x_max - x_min) + 2 * pad_x:.2f} {(y_max - y_min) + 2 * pad_y:.2f}"
 
     return f"""
@@ -551,7 +621,7 @@ def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
         }}
         .svg-map-shell {{
             width: 100%;
-            height: 710px;
+            height: 760px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -561,6 +631,7 @@ def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
             width: 100%;
             height: 100%;
             overflow: visible;
+            filter: drop-shadow(0 8px 18px rgba(76, 46, 5, 0.10));
         }}
     </style>
     <div class="svg-map-shell" id="hero-map">
@@ -598,6 +669,497 @@ def build_horizontal_chile_svg(metrics, geojson, selected_region=None):
             }});
         }});
     </script>
+    """
+
+
+def get_region_panel_stats(metrics, selected_region, national_pct):
+    if selected_region is None:
+        return None
+
+    ordered = metrics.sort_values("pct_vulnerabilidad", ascending=False).reset_index(drop=True)
+    row = ordered[ordered["region"].eq(selected_region)]
+    if row.empty:
+        return None
+
+    row = row.iloc[0]
+    rank = int(row.name) + 1
+    value = float(row["pct_vulnerabilidad"])
+    delta = value - national_pct if not pd.isna(national_pct) else np.nan
+    return {
+        "region": region_display_name(row["region"]),
+        "value": value,
+        "rank": rank,
+        "delta": delta,
+    }
+
+
+def build_vertical_chile_hero_html(metrics, geojson, selected_region=None):
+    metric_lookup = metrics.set_index("region")["pct_vulnerabilidad"].to_dict()
+    regional_avg = float(metrics["pct_vulnerabilidad"].mean())
+
+    ordered = metrics.sort_values("pct_vulnerabilidad", ascending=False).reset_index(drop=True)
+    selected_stats = None
+    if selected_region is not None:
+        row = ordered[ordered["region"].eq(selected_region)]
+        if not row.empty:
+            row = row.iloc[0]
+            selected_stats = {
+                "region": row["region_name"],
+                "value": float(row["pct_vulnerabilidad"]),
+                "rank": int(row.name) + 1,
+                "delta": float(row["pct_vulnerabilidad"]) - regional_avg,
+            }
+
+    paths = []
+    all_x = []
+    all_y = []
+    for feature in geojson["features"]:
+        region_code = int(feature["properties"]["codregion"])
+        region_name = REGION_NAMES.get(region_code, str(region_code))
+        value = metric_lookup.get(region_code, np.nan)
+        selected = selected_region is not None and region_code == selected_region
+        for coords in geometry_to_mainland_polygons(feature["geometry"]):
+            coords = np.asarray(coords, dtype=float)
+            x = coords[:, 0]
+            y = -coords[:, 1]
+            all_x.extend(x.tolist())
+            all_y.extend(y.tolist())
+            commands = [f"M {x[0]:.3f} {y[0]:.3f}"]
+            commands.extend(f"L {px:.3f} {py:.3f}" for px, py in zip(x[1:], y[1:]))
+            commands.append("Z")
+            tooltip = f"{region_name} · Vulnerabilidad subsidiada: {value:.1f}%"
+            paths.append(
+                f"""
+                <path
+                    class="region-path{' selected-region' if selected else ''}"
+                    data-region="{escape(region_name)}"
+                    d="{' '.join(commands)}"
+                    fill="{vulnerability_color(value)}"
+                    stroke="{'#4c2e05' if selected else '#fff8ea'}"
+                    stroke-width="{'0.145' if selected else '0.060'}"
+                    vector-effect="non-scaling-stroke"
+                >
+                    <title>{escape(tooltip)}</title>
+                </path>
+                """
+            )
+
+    x_min, x_max = min(all_x), max(all_x)
+    y_min, y_max = min(all_y), max(all_y)
+    pad_x = (x_max - x_min) * 0.20
+    pad_y = (y_max - y_min) * 0.035
+    view_box = (
+        f"{x_min - pad_x:.2f} {y_min - pad_y:.2f} "
+        f"{(x_max - x_min) + 2 * pad_x:.2f} {(y_max - y_min) + 2 * pad_y:.2f}"
+    )
+
+    if selected_stats is None:
+        panel_html = f"""
+        <div class="side-panel">
+            <div class="panel-kicker">Mapa interactivo</div>
+            <div class="panel-title">Selecciona una región</div>
+            <p>El color muestra la tasa regional de vulnerabilidad estructural dentro de viviendas subsidiadas.</p>
+            <p>Haz click en una región para abrir los gráficos filtrados por ese territorio.</p>
+            <div class="panel-legend"></div>
+            <div class="legend-row"><span>Menor</span><span>Mayor vulnerabilidad</span></div>
+            <div class="panel-divider"></div>
+            <p class="panel-small">Promedio regional simple: <b>{regional_avg:.1f}%</b>.</p>
+        </div>
+        """
+    else:
+        delta = selected_stats["delta"]
+        if delta > 0:
+            delta_text = f"{delta:.1f} pp sobre el promedio regional"
+        elif delta < 0:
+            delta_text = f"{abs(delta):.1f} pp bajo el promedio regional"
+        else:
+            delta_text = "igual al promedio regional"
+        panel_html = f"""
+        <div class="side-panel">
+            <div class="panel-kicker">Región seleccionada</div>
+            <div class="panel-title">{escape(selected_stats["region"])}</div>
+            <p>Vulnerabilidad estructural estimada en viviendas subsidiadas.</p>
+            <div class="panel-value">{selected_stats["value"]:.1f}%</div>
+            <div class="panel-divider"></div>
+            <p class="panel-small">Ranking nacional: <b>{selected_stats["rank"]} de 16</b>, de mayor a menor vulnerabilidad.</p>
+            <p class="panel-small">Comparación: <b>{delta_text}</b>.</p>
+            <div class="panel-legend"></div>
+            <div class="legend-row"><span>Menor</span><span>Mayor vulnerabilidad</span></div>
+        </div>
+        """
+
+    return f"""
+    <style>
+        html, body {{
+            margin: 0;
+            padding: 0;
+            background: {COLOR_BG};
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }}
+        .hero-grid {{
+            height: 790px;
+            display: grid;
+            grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+            gap: 28px;
+            align-items: center;
+            box-sizing: border-box;
+            padding: 4px 8px;
+        }}
+        .map-wrap {{
+            height: 790px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        svg {{
+            width: 100%;
+            height: 100%;
+            overflow: visible;
+            filter: drop-shadow(0 8px 18px rgba(76, 46, 5, 0.10));
+        }}
+        .region-path {{
+            cursor: pointer;
+            transition: opacity 120ms ease, stroke-width 120ms ease, filter 120ms ease;
+        }}
+        .region-path:hover {{
+            opacity: 0.95;
+            stroke: #4c2e05;
+            stroke-width: 0.18;
+            filter: drop-shadow(0 0 0.08rem rgba(76, 46, 5, 0.45));
+        }}
+        .selected-region {{
+            filter: drop-shadow(0 0 0.11rem rgba(76, 46, 5, 0.55));
+        }}
+        .side-panel {{
+            background: #fffaf0;
+            border: 1px solid rgba(211, 139, 93, 0.36);
+            border-radius: 8px;
+            padding: 24px 25px;
+            color: {COLOR_TEXT};
+            box-sizing: border-box;
+            box-shadow: 0 12px 28px rgba(76, 46, 5, 0.07);
+        }}
+        .panel-kicker {{
+            color: rgba(76, 46, 5, 0.66);
+            font: 900 12px/1.15 Arial, sans-serif;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }}
+        .panel-title {{
+            font: 900 28px/1.05 Arial, sans-serif;
+            margin-bottom: 12px;
+        }}
+        .side-panel p {{
+            color: rgba(76, 46, 5, 0.76);
+            font: 400 15px/1.42 Arial, sans-serif;
+            margin: 0 0 12px;
+        }}
+        .panel-value {{
+            color: {COLOR_RM};
+            font: 900 48px/1 Arial, sans-serif;
+            margin: 12px 0 4px;
+        }}
+        .panel-divider {{
+            border-top: 1px solid rgba(211, 139, 93, 0.25);
+            margin: 16px 0 14px;
+        }}
+        .panel-small {{
+            font-size: 14px !important;
+        }}
+        .panel-legend {{
+            height: 10px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #ead8b8, #f2a85c, #d96a2b, #823519);
+            margin: 16px 0 6px;
+            border: 1px solid rgba(76, 46, 5, 0.08);
+        }}
+        .legend-row {{
+            display: flex;
+            justify-content: space-between;
+            color: rgba(76, 46, 5, 0.62);
+            font: 800 12px/1 Arial, sans-serif;
+        }}
+        .panel-button {{
+            width: 100%;
+            margin-top: 20px;
+            border: 0;
+            border-radius: 7px;
+            background: {COLOR_RM};
+            color: #fffaf0;
+            cursor: pointer;
+            font: 900 15px/1 Arial, sans-serif;
+            padding: 13px 14px;
+        }}
+        .panel-button:hover {{
+            filter: brightness(0.96);
+        }}
+    </style>
+    <div class="hero-grid">
+        <div class="map-wrap">
+            <svg viewBox="{view_box}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mapa interactivo de Chile por región">
+                {''.join(paths)}
+            </svg>
+        </div>
+        {panel_html}
+    </div>
+    <script>
+        function goToRegion(region) {{
+            const selected = encodeURIComponent(region);
+            const parentLocation = window.parent.location;
+            window.parent.location.href = parentLocation.pathname + "?territory=" + selected;
+        }}
+        document.querySelectorAll(".region-path").forEach((region) => {{
+            region.addEventListener("click", () => goToRegion(region.dataset.region));
+        }});
+        document.querySelectorAll(".panel-button").forEach((button) => {{
+            button.addEventListener("click", () => goToRegion(button.dataset.region));
+        }});
+    </script>
+    """
+
+
+def build_region_click_points(metrics, geojson):
+    metric_lookup = metrics.set_index("region")["pct_vulnerabilidad"].to_dict()
+    rows = []
+
+    for feature in geojson["features"]:
+        region_code = int(feature["properties"]["codregion"])
+        if region_code not in metric_lookup:
+            continue
+
+        for coords in geometry_to_mainland_polygons(feature["geometry"]):
+            if len(coords) < 3:
+                continue
+
+            centroid = coords.mean(axis=0)
+            sample_count = min(10, max(4, len(coords) // 12))
+            vertex_idx = np.linspace(0, len(coords) - 1, sample_count, dtype=int)
+            sampled_vertices = coords[vertex_idx]
+            click_points = [centroid]
+
+            for factor in (0.38, 0.68):
+                click_points.extend(centroid + (sampled_vertices - centroid) * factor)
+
+            if polygon_area(coords) > 0.12:
+                click_points.extend(sampled_vertices)
+
+            for lon, lat in click_points:
+                rows.append(
+                    {
+                        "region": region_code,
+                        "region_name": region_display_name(region_code),
+                        "pct_vulnerabilidad": metric_lookup[region_code],
+                        "lon": float(lon),
+                        "lat": float(lat),
+                    }
+                )
+
+    return pd.DataFrame(rows)
+
+
+def build_plotly_chile_map(metrics, geojson, selected_region=None):
+    plot_data = metrics.sort_values("region").copy()
+    display_names = plot_data["region"].map(region_display_name)
+    selectedpoints = None
+    if selected_region is not None:
+        selected_idx = plot_data.index[plot_data["region"].eq(selected_region)].tolist()
+        if selected_idx:
+            selectedpoints = [plot_data.index.get_loc(selected_idx[0])]
+
+    colorscale = [
+        [0.00, "#ead8b8"],
+        [0.12, "#f0c997"],
+        [0.24, "#f4ba75"],
+        [0.36, "#f2a85c"],
+        [0.48, "#ee9445"],
+        [0.60, "#e77f33"],
+        [0.72, "#d96a2b"],
+        [0.84, "#c45725"],
+        [0.94, "#a94620"],
+        [1.00, "#823519"],
+    ]
+
+    fig = go.Figure(
+        go.Choropleth(
+            geojson=geojson,
+            featureidkey="properties.codregion",
+            locations=plot_data["region"],
+            z=plot_data["pct_vulnerabilidad"],
+            zmin=39,
+            zmax=70,
+            text=display_names,
+            customdata=np.stack(
+                [
+                    display_names.to_numpy(),
+                    plot_data["region"].to_numpy(),
+                    plot_data["pct_vulnerabilidad"].round(1).to_numpy(),
+                ],
+                axis=-1,
+            ),
+            colorscale=colorscale,
+            showscale=False,
+            marker_line_color="#fff8ea",
+            marker_line_width=0.9,
+            selectedpoints=selectedpoints,
+            selected={"marker": {"opacity": 1.0}},
+            unselected={"marker": {"opacity": 0.72 if selected_region is not None else 1.0}},
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Vulnerabilidad subsidiada: %{customdata[2]:.1f}%"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    click_points = build_region_click_points(plot_data, geojson)
+    selected_click_points = None
+    if selected_region is not None and not click_points.empty:
+        selected_click_points = click_points.index[click_points["region"].eq(selected_region)].tolist()
+
+    if not click_points.empty:
+        fig.add_trace(
+            go.Scattergeo(
+                lon=click_points["lon"],
+                lat=click_points["lat"],
+                mode="markers",
+                customdata=np.stack(
+                    [
+                        click_points["region_name"].to_numpy(),
+                        click_points["region"].to_numpy(),
+                        click_points["pct_vulnerabilidad"].round(1).to_numpy(),
+                    ],
+                    axis=-1,
+                ),
+                marker={
+                    "size": 24,
+                    "color": "rgba(76, 46, 5, 0)",
+                    "line": {"width": 0},
+                },
+                selectedpoints=selected_click_points,
+                selected={"marker": {"color": "rgba(76, 46, 5, 0)", "opacity": 0, "size": 26}},
+                unselected={"marker": {"opacity": 0}},
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Vulnerabilidad subsidiada: %{customdata[2]:.1f}%"
+                    "<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+
+    fig.update_geos(
+        fitbounds="locations",
+        visible=False,
+        projection_type="mercator",
+        bgcolor=COLOR_BG,
+        showland=False,
+        showcountries=False,
+        showcoastlines=False,
+        showframe=False,
+    )
+    fig.update_layout(
+        height=880,
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        paper_bgcolor=COLOR_BG,
+        plot_bgcolor=COLOR_BG,
+        dragmode=False,
+        clickmode="event+select",
+        hoverlabel={
+            "bgcolor": "#fffaf0",
+            "bordercolor": COLOR_ALMOND,
+            "font": {"color": COLOR_TEXT, "size": 14},
+        },
+    )
+    return fig
+
+
+def extract_plotly_selected_region(event):
+    if not event:
+        return None
+
+    selection = getattr(event, "selection", None)
+    if selection is None and isinstance(event, dict):
+        selection = event.get("selection")
+    if not selection:
+        return None
+
+    points = getattr(selection, "points", None)
+    if points is None and isinstance(selection, dict):
+        points = selection.get("points")
+    if not points:
+        return None
+
+    point = points[0]
+    if not isinstance(point, dict):
+        return None
+
+    customdata = point.get("customdata")
+    if isinstance(customdata, (list, tuple, np.ndarray)) and len(customdata) >= 1:
+        return str(customdata[0])
+
+    location = point.get("location")
+    if location is not None:
+        try:
+            return region_display_name(int(location))
+        except (TypeError, ValueError):
+            return str(location)
+
+    text = point.get("text")
+    if text:
+        return str(text)
+    return None
+
+
+def hero_panel_html(stats, national_pct):
+    if stats is None:
+        return f"""
+        <div class="hero-panel">
+            <div class="hero-panel-kicker">Mapa interactivo</div>
+            <div class="hero-panel-title">Selecciona una región</div>
+            <div class="hero-panel-copy">
+                El color muestra la tasa regional de vulnerabilidad estructural dentro de las viviendas subsidiadas.
+                Haz click en una región para abrir los gráficos filtrados por ese territorio.
+            </div>
+            <div class="map-legend"></div>
+            <div class="legend-scale">
+                <span>Menor</span>
+                <span>Mayor vulnerabilidad</span>
+            </div>
+            <div class="hero-panel-row">
+                Promedio nacional en viviendas subsidiadas: <b>{fmt_pct(national_pct)}</b>.
+            </div>
+        </div>
+        """
+
+    delta = stats["delta"]
+    delta_text = "sin diferencia relevante"
+    if not pd.isna(delta):
+        if delta > 0:
+            delta_text = f"{delta:.1f} pp sobre el promedio nacional"
+        elif delta < 0:
+            delta_text = f"{abs(delta):.1f} pp bajo el promedio nacional"
+
+    return f"""
+    <div class="hero-panel">
+        <div class="hero-panel-kicker">Región seleccionada</div>
+        <div class="hero-panel-title">{escape(stats["region"])}</div>
+        <div class="hero-panel-copy">
+            Vulnerabilidad estructural estimada en viviendas subsidiadas.
+        </div>
+        <div class="hero-panel-value">{stats["value"]:.1f}%</div>
+        <div class="hero-panel-row">
+            Ranking nacional: <b>{stats["rank"]} de 16</b> regiones, ordenado de mayor a menor vulnerabilidad.
+        </div>
+        <div class="hero-panel-row">
+            Comparación territorial: <b>{delta_text}</b>.
+        </div>
+        <div class="map-legend"></div>
+        <div class="legend-scale">
+            <span>Menor</span>
+            <span>Mayor vulnerabilidad</span>
+        </div>
+    </div>
     """
 
 
@@ -782,29 +1344,42 @@ with st.spinner("Cargando mapa y datos..."):
     ) = load_project_data()
 
 selected_region = territory_to_region_code(st.session_state["territory"])
-
-components.html(
-    build_horizontal_chile_svg(
-        regional_metrics,
-        geojson_regions,
-        selected_region if st.session_state["has_selected_territory"] else None,
-    ),
-    height=720,
-    scrolling=False,
+national_pct = calculate_summary_metrics(df_master, ds49_totals, "Chile completo")["vulnerabilidad"]
+panel_stats = get_region_panel_stats(
+    regional_metrics,
+    selected_region if st.session_state["has_selected_territory"] else None,
+    national_pct,
 )
+
+hero_map_col, hero_panel_col = st.columns([0.74, 0.26], gap="large")
+with hero_map_col:
+    map_event = st.plotly_chart(
+        build_plotly_chile_map(
+            regional_metrics,
+            geojson_regions,
+            selected_region if st.session_state["has_selected_territory"] else None,
+        ),
+        key="chile_region_map",
+        width="stretch",
+        config={"displayModeBar": False, "scrollZoom": False},
+        on_select="rerun",
+        selection_mode="points",
+    )
+
+clicked_region = extract_plotly_selected_region(map_event)
+if clicked_region and clicked_region != st.session_state["territory"]:
+    st.session_state["territory"] = clicked_region
+    st.session_state["has_selected_territory"] = True
+    st.session_state["_scroll_to_charts"] = True
+    st.rerun()
+
+with hero_panel_col:
+    st.markdown(hero_panel_html(panel_stats, national_pct), unsafe_allow_html=True)
+
 st.markdown(
-    '<div class="hero-map-note">Pasa el mouse para ver la región. Haz click sobre una región para explorar sus gráficos.</div>',
+    '<div class="hero-map-note">Pasa el mouse para ver la región. Haz click sobre una región para abrir sus gráficos.</div>',
     unsafe_allow_html=True,
 )
-
-button_left, button_center, button_right = st.columns([1, 0.28, 1])
-with button_center:
-    if st.button("Ver Chile completo", type="primary", width="stretch"):
-        st.session_state["territory"] = "Chile completo"
-        st.session_state["has_selected_territory"] = True
-        st.session_state["_scroll_to_charts"] = True
-        st.query_params["territory"] = "Chile completo"
-        st.rerun()
 
 st.markdown('<div id="charts-anchor"></div>', unsafe_allow_html=True)
 scroll_to_charts_once()
