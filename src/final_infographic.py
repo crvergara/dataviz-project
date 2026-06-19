@@ -683,11 +683,22 @@ def plot_donut_vulnerability(ax, df):
         w = df_sub['expr'].sum()
         return (df_sub[mask]['expr'].sum() / w * 100) if w > 0 else 0
 
-    pct_ambas = round(wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 1)))
-    pct_solo_v = round(wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 0)))
-    pct_solo_e = round(wpct((df_sub['trampa_violencia'] == 0) & (df_sub['trampa_economica'] == 1)))
-    pct_ninguna = 100 - (pct_ambas + pct_solo_v + pct_solo_e)
-    pct_fallo = pct_ambas + pct_solo_v + pct_solo_e
+    # Porcentajes crudos (las 4 categorias son mutuamente excluyentes y suman 100)
+    raw_ambas = wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 1))
+    raw_solo_v = wpct((df_sub['trampa_violencia'] == 1) & (df_sub['trampa_economica'] == 0))
+    raw_solo_e = wpct((df_sub['trampa_violencia'] == 0) & (df_sub['trampa_economica'] == 1))
+    raw_ninguna = max(0.0, 100 - (raw_ambas + raw_solo_v + raw_solo_e))
+    raw_fallo = min(100.0, raw_ambas + raw_solo_v + raw_solo_e)
+
+    # Geometria de la dona: valores crudos -> siempre no negativos (evita cuñas corruptas)
+    geom_values = [raw_ambas, raw_solo_v, raw_solo_e, raw_ninguna]
+
+    # Etiquetas: valores redondeados ("sin vulnerabilidad" como resto para sumar 100)
+    pct_ambas = round(raw_ambas)
+    pct_solo_v = round(raw_solo_v)
+    pct_solo_e = round(raw_solo_e)
+    pct_ninguna = max(0, 100 - (pct_ambas + pct_solo_v + pct_solo_e))
+    pct_fallo = min(100, max(0, round(raw_fallo)))
 
     values = [pct_ambas, pct_solo_v, pct_solo_e, pct_ninguna]
     labels = [
@@ -702,7 +713,7 @@ def plot_donut_vulnerability(ax, df):
                  fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, loc='left', pad=7)
 
     ax.pie(
-        [pct_fallo, 100 - pct_fallo],
+        [raw_fallo, max(0.0, 100 - raw_fallo)],
         colors=["#e07b3a", (0, 0, 0, 0)],
         startangle=94,
         counterclock=False,
@@ -711,7 +722,7 @@ def plot_donut_vulnerability(ax, df):
     )
 
     wedges, _ = ax.pie(
-        values,
+        geom_values,
         colors=colors,
         startangle=94,
         counterclock=False,
