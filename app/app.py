@@ -1193,7 +1193,7 @@ def plot_regional_ranking(metrics, selected_region=None):
     ax.set_title(
         "Ranking regional de vulnerabilidad estructural en viviendas subsidiadas",
         loc="left",
-        fontsize=13,
+        fontsize=9.5,
         fontweight="black",
         color=COLOR_TEXT,
         pad=10,
@@ -1250,7 +1250,7 @@ def plot_ds49_selected_region(ds49_totals, selection):
     ax.set_title(
         f"Beneficiados DS49 en {label}",
         loc="left",
-        fontsize=12.2,
+        fontsize=9.5,
         fontweight="black",
         color=COLOR_TEXT,
         pad=10,
@@ -1293,7 +1293,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 if "territory" not in st.session_state:
     st.session_state["territory"] = "Chile completo"
 if "has_selected_territory" not in st.session_state:
-    st.session_state["has_selected_territory"] = False
+    st.session_state["has_selected_territory"] = True
 if "_scroll_to_charts" not in st.session_state:
     st.session_state["_scroll_to_charts"] = False
 
@@ -1384,9 +1384,6 @@ st.markdown(
 st.markdown('<div id="charts-anchor"></div>', unsafe_allow_html=True)
 scroll_to_charts_once()
 
-if not st.session_state["has_selected_territory"]:
-    st.stop()
-
 current_index = options.index(st.session_state["territory"]) if st.session_state["territory"] in options else 0
 analysis_left, analysis_right = st.columns([0.68, 0.32], gap="large")
 with analysis_left:
@@ -1475,6 +1472,20 @@ with tab_story:
         plot_subsidy_butterfly(ax, df_context)
         show_matplotlib(fig)
 
+    moran_text = (
+        "**Existe un agrupamiento espacial significativo.** "
+        "Las regiones con alta vulnerabilidad en viviendas subsidiadas tienden a "
+        "estar geográficamente juntas, demostrando empíricamente que la segregación territorial no es un fenómeno aleatorio."
+    ) if moran_p < 0.05 else "No se detecta un agrupamiento espacial estadísticamente significativo."
+    
+    st.markdown(f"""
+    <div style="background-color: {COLOR_ALMOND}20; border-left: 5px solid {COLOR_RM}; padding: 18px 20px; border-radius: 6px; margin-top: 16px; border: 1px solid rgba(211, 139, 93, 0.25); box-shadow: 0 4px 12px rgba(76,46,5,0.03);">
+        <h4 style="margin-top: 0; margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 17px; font-weight: 900;">📍 Análisis de Autocorrelación Espacial (Moran's I)</h4>
+        <p style="margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 14.5px;">Índice global: <b>{moran_i:.3f}</b> &nbsp;|&nbsp; Valor p: <b>{moran_p:.3f}</b></p>
+        <p style="margin-bottom: 0; color: rgba(76, 46, 5, 0.85); font-size: 14.5px; line-height: 1.5;">{moran_text}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 with tab_region:
     st.markdown('<div class="section-label">Territorio seleccionado</div>', unsafe_allow_html=True)
@@ -1491,16 +1502,34 @@ with tab_region:
                 selected_metrics = selected_metrics[selected_metrics["region"].eq(selected_region)]
 
             st.markdown("#### Tasa regional")
-            st.dataframe(
-                selected_metrics[["region_name", "pct_vulnerabilidad"]].rename(
-                    columns={
-                        "region_name": "Región",
-                        "pct_vulnerabilidad": "% vulnerabilidad subsidiadas",
-                    }
-                ),
-                hide_index=True,
-                width="stretch",
-            )
+            if selected_region is not None:
+                val = selected_metrics['pct_vulnerabilidad'].iloc[0]
+                delta_val = val - national_pct
+                ordered = regional_metrics.sort_values("pct_vulnerabilidad", ascending=False).reset_index()
+                rank = ordered.index[ordered["region"] == selected_region].tolist()[0] + 1
+                
+                st.metric(
+                    label="Vulnerabilidad en viviendas subsidiadas",
+                    value=f"{val:.1f}%",
+                    delta=f"{delta_val:+.1f} pp vs Promedio Nacional",
+                    delta_color="inverse"
+                )
+                st.markdown(f'''
+                <div style="font-size: 13.5px; color: rgba(76, 46, 5, 0.85); margin-top: -5px; margin-bottom: 22px; padding: 12px; background-color: #fffaf0; border-left: 4px solid {COLOR_RM}; border-radius: 4px;">
+                    🎯 <b>Insight:</b> Esta región ocupa el puesto <b>N°{rank} de 16</b> en el ranking nacional de mayor vulnerabilidad estructural.
+                </div>
+                ''', unsafe_allow_html=True)
+            else:
+                st.dataframe(
+                    selected_metrics[["region_name", "pct_vulnerabilidad"]].sort_values("pct_vulnerabilidad", ascending=False).rename(
+                        columns={
+                            "region_name": "Región",
+                            "pct_vulnerabilidad": "% vulnerabilidad subsidiadas",
+                        }
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
 
             st.markdown("#### Evolución DS49")
             show_matplotlib(plot_ds49_selected_region(ds49_totals, territory))
