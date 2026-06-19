@@ -38,7 +38,6 @@ from src.final_infographic import (  # noqa: E402
     plot_ds49_yoy_growth,
     plot_historical_line,
     plot_radar_rm_vs_regions,
-    plot_subsidy_butterfly,
     prepare_ds49_yoy,
     read_ds49_region_totals,
 )
@@ -287,10 +286,60 @@ def normalize_text(value):
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
+def build_historical_region_dataset(raw_dir, cache_path):
+    if cache_path.exists():
+        return pd.read_parquet(cache_path)
+
+    years = {
+        2015: ("casen_2015.dta", "v38e", "expr", "v16"),
+        2017: ("casen_2017.dta", "v38e", "expr", "v15"),
+        2022: ("casen_2022.dta", "v36e", "expr", "v15"),
+        2024: ("casen_2024.dta", "v36e", "expr", "v15"),
+    }
+
+    frames = []
+    for year, (filename, balacera_col, weight_col, subsidy_col) in years.items():
+        path = raw_dir / filename
+        if not path.exists():
+            continue
+
+        target_cols = ["region", "r", weight_col, subsidy_col, balacera_col, "pco1", "id_persona", "parentesco"]
+        sample = pd.read_stata(path, iterator=True).read(1)
+        cols_to_load = [col for col in target_cols if col in sample.columns]
+        data = pd.read_stata(path, columns=cols_to_load, convert_categoricals=False)
+
+        if "r" in data.columns and "region" not in data.columns:
+            data = data.rename(columns={"r": "region"})
+
+        head_col = next((col for col in ["pco1", "id_persona", "parentesco"] if col in data.columns), None)
+        if head_col is not None:
+            data = data[data[head_col].eq(1)]
+
+        data = data.dropna(subset=["region", balacera_col])
+        data = data[data[subsidy_col].isin([1, 2])].copy()
+        data["region"] = data["region"].astype(int)
+        data["ponderador"] = data[weight_col]
+        data["is_balacera"] = np.where(data[balacera_col].isin([3, 4]), 1, 0)
+        data["year"] = year
+        frames.append(data[["year", "region", "is_balacera", "ponderador"]])
+
+    if not frames:
+        return pd.DataFrame(columns=["year", "region", "is_balacera", "ponderador"])
+
+    result = pd.concat(frames, ignore_index=True)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    result.to_parquet(cache_path, engine="pyarrow")
+    return result
+
+
 @st.cache_data(show_spinner=False)
 def load_project_data():
     df_master = pd.read_parquet(PROJECT_ROOT / "data" / "processed" / "master_dataset.parquet")
     df_hist = pd.read_parquet(PROJECT_ROOT / "data" / "processed" / "balaceras_historico_zonas.parquet")
+    df_hist_regions = build_historical_region_dataset(
+        PROJECT_ROOT / "data" / "raw",
+        PROJECT_ROOT / "data" / "processed" / "balaceras_historico_regiones.parquet",
+    )
     ds49_totals = read_ds49_region_totals(PROJECT_ROOT / "data" / "raw" / "SUDS49Mar2026.xlsx")
     df_ds49_yoy = prepare_ds49_yoy(ds49_totals)
 
@@ -299,7 +348,7 @@ def load_project_data():
 
     regional_metrics = build_regional_vulnerability_metrics(df_master)
     moran_i, moran_p = calculate_spatial_autocorrelation(regional_metrics, geojson_regions)
-    return df_master, df_hist, ds49_totals, df_ds49_yoy, geojson_regions, regional_metrics, moran_i, moran_p
+    return df_master, df_hist, df_hist_regions, ds49_totals, df_ds49_yoy, geojson_regions, regional_metrics, moran_i, moran_p
 
 
 def add_vulnerability_flags(df):
@@ -415,6 +464,26 @@ def metric_card(label, value, detail, accent):
 def show_matplotlib(fig):
     st.pyplot(fig, width="stretch")
     plt.close(fig)
+
+
+DASH_TITLE_FS = 12.5
+DASH_LABEL_FS = 8.5
+DASH_TICK_FS = 8
+DASH_LINE_FIGSIZE = (8.8, 3.6)
+DASH_SQUARE_FIGSIZE = (5.6, 4.8)
+DASH_BUTTERFLY_FIGSIZE = (7.2, 4.8)
+
+
+def normalize_dashboard_title(ax, title=None, loc="left", pad=12):
+    title = title if title is not None else ax.get_title(loc=loc) or ax.get_title()
+    ax.set_title(
+        title,
+        loc=loc,
+        fontsize=DASH_TITLE_FS,
+        fontweight="black",
+        color=COLOR_TEXT,
+        pad=pad,
+    )
 
 
 def plot_dashboard_map(ax, metrics, geojson, moran_i, moran_p, selected_region=None):
@@ -1236,7 +1305,7 @@ def plot_ds49_selected_region(ds49_totals, selection):
         selected = data[data["region"].map(normalize_text).eq(normalize_text(selection))].copy()
         label = selection
 
-    fig, ax = plt.subplots(figsize=(7.8, 3.3), facecolor=COLOR_BG)
+    fig, ax = plt.subplots(figsize=DASH_LINE_FIGSIZE, facecolor=COLOR_BG)
     sns.lineplot(
         data=selected,
         x="year",
@@ -1247,25 +1316,309 @@ def plot_ds49_selected_region(ds49_totals, selection):
         color=COLOR_RM,
         ax=ax,
     )
-    ax.set_title(
-        f"Beneficiados DS49 en {label}",
-        loc="left",
-        fontsize=9.5,
-        fontweight="black",
-        color=COLOR_TEXT,
-        pad=10,
-    )
+    normalize_dashboard_title(ax, f"2. Beneficiados DS49 en {label}", pad=12)
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.yaxis.grid(True, linestyle="--", alpha=0.25, color=COLOR_ALMOND)
     ax.xaxis.grid(False)
-    ax.tick_params(axis="both", labelsize=8.5, length=0)
+    ax.tick_params(axis="both", labelsize=DASH_TICK_FS, length=0)
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.spines["bottom"].set_visible(True)
     ax.spines["bottom"].set_color(COLOR_ALMOND)
     ax.spines["bottom"].set_alpha(0.45)
     return fig
+
+
+def plot_historical_line_streamlit(ax, df_hist, df_hist_regions, selected_region):
+    def draw_default():
+        plot_historical_line(ax, df_hist)
+        normalize_dashboard_title(ax, "3. Evolución de balaceras en viviendas subsidiadas (%)", pad=18)
+        ax.tick_params(axis="both", labelsize=DASH_TICK_FS, length=0)
+        legend = ax.get_legend()
+        if legend is not None:
+            for text in legend.get_texts():
+                text.set_fontsize(DASH_LABEL_FS)
+
+    if selected_region is None or selected_region == 13:
+        draw_default()
+        return
+
+    selected_name = region_display_name(selected_region)
+    compare = df_hist_regions[df_hist_regions["region"].isin([13, selected_region])].copy()
+    if compare.empty:
+        draw_default()
+        return
+
+    compare["zona"] = np.where(compare["region"].eq(13), "Santiago (RM)", selected_name)
+    compare["weighted_balacera"] = compare["is_balacera"] * compare["ponderador"]
+    plot_data = compare.groupby(["year", "zona"], as_index=False).agg(
+        weighted_balacera=("weighted_balacera", "sum"),
+        ponderador=("ponderador", "sum"),
+    )
+    plot_data["pct"] = np.where(
+        plot_data["ponderador"] > 0,
+        plot_data["weighted_balacera"] / plot_data["ponderador"] * 100,
+        np.nan,
+    )
+    plot_data = plot_data.pivot(index="year", columns="zona", values="pct")
+
+    required = ["Santiago (RM)", selected_name]
+    if any(col not in plot_data.columns for col in required):
+        draw_default()
+        return
+
+    years = plot_data.index.to_numpy()
+    rm_values = plot_data["Santiago (RM)"]
+    region_values = plot_data[selected_name]
+
+    ax.fill_between(years, region_values, rm_values, color=COLOR_RM, alpha=0.07, zorder=1)
+    for year in years:
+        val_rm = plot_data.loc[year, "Santiago (RM)"]
+        val_region = plot_data.loc[year, selected_name]
+        ax.plot([year, year], [val_region, val_rm], color=COLOR_RM, linestyle="--", linewidth=1, alpha=0.34, zorder=2)
+        ax.text(year, val_rm + 1.2, f"{int(round(val_rm))}%", color=COLOR_RM,
+                fontweight="bold", ha="center", fontsize=DASH_LABEL_FS)
+        region_va = "top" if val_region <= val_rm else "bottom"
+        region_offset = -1.2 if region_va == "top" else 1.2
+        ax.text(year, val_region + region_offset, f"{int(round(val_region))}%", color=COLOR_RESTO,
+                fontweight="bold", ha="center", fontsize=DASH_LABEL_FS, va=region_va)
+
+    ax.plot(years, rm_values, marker="o", color=COLOR_RM, linewidth=2.8,
+            markersize=7, label="Santiago (RM)", zorder=4)
+    ax.plot(years, region_values, marker="o", color=COLOR_RESTO, linewidth=2.8,
+            markersize=7, label=selected_name, zorder=3)
+
+    max_value = float(plot_data[required].to_numpy().max())
+    y_max = max(60, int(np.ceil((max_value + 6) / 10) * 10))
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(int(year)) for year in years], fontsize=DASH_TICK_FS)
+    ax.set_ylim(0, y_max)
+    ax.set_yticks(np.arange(0, y_max + 1, 20))
+    ax.yaxis.grid(True, linestyle="--", alpha=0.3, color=COLOR_ALMOND)
+    ax.xaxis.grid(False)
+    ax.tick_params(axis="y", labelsize=DASH_TICK_FS, length=0)
+    ax.tick_params(axis="x", length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.spines["bottom"].set_visible(True)
+    ax.spines["bottom"].set_color(COLOR_ALMOND)
+    ax.spines["bottom"].set_alpha(0.45)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    normalize_dashboard_title(
+        ax,
+        f"3. Evolución de balaceras:\nSantiago vs {selected_name} (%)",
+        pad=18,
+    )
+    ax.legend(loc="upper left", frameon=False, facecolor="none", edgecolor="none", fontsize=DASH_LABEL_FS)
+
+
+def plot_radar_streamlit(ax, df, selected_region):
+    def draw_default():
+        plot_radar_rm_vs_regions(ax, df)
+        normalize_dashboard_title(ax, "4. Vulnerabilidades subsidiadas:\nSantiago vs Regiones (%)", loc="center", pad=4)
+        for label in ax.get_xticklabels():
+            label.set_fontsize(DASH_LABEL_FS - 1)
+            label.set_fontweight("bold")
+        for label in ax.get_yticklabels():
+            label.set_fontsize(DASH_TICK_FS - 1)
+        legend = ax.get_legend()
+        if legend is not None:
+            for text in legend.get_texts():
+                text.set_fontsize(DASH_TICK_FS - 1)
+
+    if selected_region is None or selected_region == 13:
+        draw_default()
+        return
+
+    selected_name = region_display_name(selected_region)
+    df_sub = df[df["grupo_vivienda"].eq("Subsidiada")].copy()
+    df_sub["dim_multidim"] = np.where(df_sub["pobreza_multi"].eq(1), 1, 0)
+    df_sub["dim_hacinamiento"] = np.where(df_sub["ind_hacina"] >= 2, 1, 0)
+    df_sub["dim_balaceras"] = np.where(df_sub["v36e"] >= 3, 1, 0)
+    df_sub["dim_narco"] = np.where(df_sub["v36c"] >= 3, 1, 0)
+    df_sub["dim_alumbrado"] = np.where(df_sub["v35a"].eq(2), 1, 0)
+    df_sub["dim_basura"] = np.where(df_sub["v35c"].eq(2), 1, 0)
+
+    dimensions = ["dim_multidim", "dim_hacinamiento", "dim_balaceras", "dim_narco", "dim_alumbrado", "dim_basura"]
+    labels = ["Pobreza\nmulti", "Hacinam.", "Balaceras", "Narco", "Sin\nluz", "Basura"]
+
+    def wpct(data, dim):
+        weight = data["expr"].sum()
+        if weight <= 0:
+            return 0.0
+        return data.loc[data[dim].eq(1), "expr"].sum() / weight * 100
+
+    df_rm = df_sub[df_sub["region"].eq(13)]
+    df_region = df_sub[df_sub["region"].eq(selected_region)]
+    if df_region.empty:
+        draw_default()
+        return
+
+    vals_rm = [wpct(df_rm, dim) for dim in dimensions]
+    vals_region = [wpct(df_region, dim) for dim in dimensions]
+    max_value = max(vals_rm + vals_region)
+    radial_max = max(40, int(np.ceil((max_value + 4) / 10) * 10))
+    radial_ticks = [tick for tick in [10, 20, 30, 40, 50, 60] if tick < radial_max]
+
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+    vals_rm += vals_rm[:1]
+    vals_region += vals_region[:1]
+
+    ax.set_facecolor(COLOR_BG)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.plot(angles, vals_region, color=COLOR_RESTO, linewidth=1.8, marker="o",
+            markersize=3.5, label=selected_name, zorder=3)
+    ax.fill(angles, vals_region, color=COLOR_RESTO, alpha=0.16, zorder=2)
+    ax.plot(angles, vals_rm, color=COLOR_RM, linewidth=2.0, marker="o",
+            markersize=3.5, label="Santiago (RM)", zorder=4)
+    ax.fill(angles, vals_rm, color=COLOR_RM, alpha=0.18, zorder=2)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, fontsize=DASH_LABEL_FS - 1, fontweight="bold", color=COLOR_TEXT)
+    ax.tick_params(axis="x", pad=3)
+    ax.set_ylim(0, radial_max)
+    ax.set_yticks(radial_ticks)
+    ax.set_yticklabels([f"{tick}%" for tick in radial_ticks], fontsize=DASH_TICK_FS - 1, color=COLOR_ALMOND)
+    ax.set_rlabel_position(78)
+    ax.grid(color=COLOR_ALMOND, linestyle="--", linewidth=0.6, alpha=0.36)
+    ax.spines["polar"].set_visible(False)
+    normalize_dashboard_title(
+        ax,
+        f"4. Vulnerabilidades subsidiadas:\nSantiago vs {selected_name} (%)",
+        loc="center",
+        pad=4,
+    )
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.19), ncol=2,
+              frameon=False, fontsize=DASH_TICK_FS - 1, handlelength=1.4, columnspacing=0.8)
+
+
+def plot_subsidy_butterfly_streamlit(ax, df):
+    df = df.copy()
+    df["Balaceras Frecuentes"] = np.where(df["v36b"] >= 3, 1, 0)
+    df["Narco-trafico Frecuente"] = np.where(df["v36c"] >= 3, 1, 0)
+    df["Alta Dependencia (>20%)"] = np.where(df["subsidy_ratio"] > 0.20, 1, 0)
+    df["Ingreso Autonomo <$600k"] = np.where(df["yautcorh"] < 600000, 1, 0)
+    df["Pobreza por Ingresos"] = np.where(df["pobreza"].isin([1, 2]), 1, 0)
+
+    vars_to_plot = [
+        "Balaceras Frecuentes",
+        "Narco-trafico Frecuente",
+        "Pobreza por Ingresos",
+        "Alta Dependencia (>20%)",
+        "Ingreso Autonomo <$600k",
+    ]
+    label_map = {
+        "Balaceras Frecuentes": "BALACERAS",
+        "Narco-trafico Frecuente": "NARCO FRECUENTE",
+        "Pobreza por Ingresos": "POBREZA INGRESOS",
+        "Alta Dependencia (>20%)": "DEPENDENCIA >20%",
+        "Ingreso Autonomo <$600k": "INGRESO <$600K",
+    }
+
+    df_sub = df[df["is_subsidized"].eq(1)]
+    df_nosub = df[df["is_subsidized"].eq(0)]
+
+    def wpct(subset, var):
+        weight = subset["expr"].sum()
+        if weight <= 0:
+            return 0.0
+        return subset.loc[subset[var].eq(1), "expr"].sum() / weight * 100
+
+    plot_df = pd.DataFrame(
+        [
+            {
+                "Variable": var,
+                "No_Subsidiada": wpct(df_nosub, var),
+                "Subsidiada": wpct(df_sub, var),
+            }
+            for var in vars_to_plot
+        ]
+    )
+
+    max_pct = float(plot_df[["No_Subsidiada", "Subsidiada"]].to_numpy().max())
+    track_max = max(42, int(np.ceil(max_pct / 5) * 5))
+    label_pad = max(3.6, track_max * 0.07)
+    xlim = track_max + max(12, track_max * 0.24)
+
+    row_gap = 1.06
+    bar_h = 0.16
+    blue_lit = COLOR_RESTO
+    blue_dim = "#7485ad"
+    orange_lit = COLOR_RM
+    orange_dim = "#f4b06f"
+    top_y = (len(vars_to_plot) - 1) * row_gap
+
+    for i, row in plot_df.iterrows():
+        y = top_y - i * row_gap
+        val_nosub = row["No_Subsidiada"]
+        val_sub = row["Subsidiada"]
+        nosub_color = blue_lit if val_nosub >= val_sub else blue_dim
+        sub_color = orange_lit if val_sub >= val_nosub else orange_dim
+
+        ax.barh(y, -track_max, left=0, color=COLOR_ALMOND, alpha=0.18, height=bar_h, edgecolor="none", zorder=1)
+        ax.barh(y, track_max, left=0, color=COLOR_ALMOND, alpha=0.18, height=bar_h, edgecolor="none", zorder=1)
+        ax.barh(y, -val_nosub, left=0, color=nosub_color, height=bar_h, edgecolor="none", zorder=3)
+        ax.barh(y, val_sub, left=0, color=sub_color, height=bar_h, edgecolor="none", zorder=3)
+
+        ax.text(
+            0,
+            y + 0.36,
+            label_map[row["Variable"]],
+            ha="center",
+            va="bottom",
+            color=COLOR_TEXT,
+            fontsize=DASH_LABEL_FS,
+            fontweight="black",
+            zorder=5,
+        )
+        ax.text(
+            -track_max - label_pad,
+            y,
+            f"{val_nosub:.0f}%",
+            ha="right",
+            va="center",
+            color=nosub_color,
+            fontsize=DASH_LABEL_FS + 1.5,
+            fontweight="black",
+            zorder=5,
+        )
+        ax.text(
+            track_max + label_pad,
+            y,
+            f"{val_sub:.0f}%",
+            ha="left",
+            va="center",
+            color=sub_color,
+            fontsize=DASH_LABEL_FS + 1.5,
+            fontweight="black",
+            zorder=5,
+        )
+
+    ax.text(-track_max * 0.28, top_y + 0.64, "SIN SUBSIDIO", ha="right", va="bottom",
+            color=COLOR_RESTO, fontsize=DASH_LABEL_FS + 1, fontweight="black")
+    ax.text(track_max * 0.28, top_y + 0.64, "CON SUBSIDIO", ha="left", va="bottom",
+            color=COLOR_RM, fontsize=DASH_LABEL_FS + 1, fontweight="black")
+    ax.text(
+        -xlim,
+        top_y + 1.72,
+        "6. Vulnerabilidades:\nCon subsidio vs Sin subsidio (%)",
+        ha="left",
+        va="top",
+        fontsize=DASH_TITLE_FS,
+        fontweight="black",
+        color=COLOR_TEXT,
+        linespacing=1.05,
+    )
+
+    ax.set_xlim(-xlim, xlim)
+    ax.set_ylim(-0.82, top_y + 1.78)
+    ax.set_yticks([])
+    ax.set_xticks([])
+    ax.axis("off")
 
 
 def build_filtered_dataset_preview(df_context):
@@ -1290,10 +1643,17 @@ def build_filtered_dataset_preview(df_context):
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+LANDING_FLOW_VERSION = 2
+if st.session_state.get("_landing_flow_version") != LANDING_FLOW_VERSION:
+    st.session_state["territory"] = "Chile completo"
+    st.session_state["has_selected_territory"] = False
+    st.session_state["_scroll_to_charts"] = False
+    st.session_state["_landing_flow_version"] = LANDING_FLOW_VERSION
+
 if "territory" not in st.session_state:
     st.session_state["territory"] = "Chile completo"
 if "has_selected_territory" not in st.session_state:
-    st.session_state["has_selected_territory"] = True
+    st.session_state["has_selected_territory"] = False
 if "_scroll_to_charts" not in st.session_state:
     st.session_state["_scroll_to_charts"] = False
 
@@ -1335,6 +1695,7 @@ with st.spinner("Cargando mapa y datos..."):
     (
         df_master,
         df_hist,
+        df_hist_regions,
         ds49_totals,
         df_ds49_yoy,
         geojson_regions,
@@ -1375,14 +1736,22 @@ if clicked_region and clicked_region != st.session_state["territory"]:
 
 with hero_panel_col:
     st.markdown(hero_panel_html(panel_stats, national_pct), unsafe_allow_html=True)
+    if st.button("Ver Chile completo", type="primary", width="stretch"):
+        st.session_state["territory"] = "Chile completo"
+        st.session_state["has_selected_territory"] = True
+        st.session_state["_scroll_to_charts"] = True
+        st.rerun()
 
 st.markdown(
-    '<div class="hero-map-note">Pasa el mouse para ver la región. Haz click sobre una región para abrir sus gráficos.</div>',
+    '<div class="hero-map-note">Pasa el mouse para ver la región. Haz click sobre una región o usa Chile completo para abrir los gráficos.</div>',
     unsafe_allow_html=True,
 )
 
 st.markdown('<div id="charts-anchor"></div>', unsafe_allow_html=True)
 scroll_to_charts_once()
+
+if not st.session_state["has_selected_territory"]:
+    st.stop()
 
 current_index = options.index(st.session_state["territory"]) if st.session_state["territory"] in options else 0
 analysis_left, analysis_right = st.columns([0.68, 0.32], gap="large")
@@ -1445,46 +1814,56 @@ tab_story, tab_region, tab_data = st.tabs(["Vista narrativa", "Exploración regi
 
 with tab_story:
     st.markdown('<div class="section-label">Lectura principal</div>', unsafe_allow_html=True)
-    top_left, top_right = st.columns(2, gap="large")
-    with top_left:
-        with st.container(border=True):
-            show_matplotlib(plot_ds49_selected_region(ds49_totals, territory))
-    with top_right:
-        with st.container(border=True):
-            fig, ax = plt.subplots(figsize=(7.4, 3.35), facecolor=COLOR_BG)
-            plot_historical_line(ax, df_hist)
-            show_matplotlib(fig)
-
-    mid_left, mid_right = st.columns(2, gap="large")
-    with mid_left:
-        with st.container(border=True):
-            fig, ax = plt.subplots(figsize=(5.2, 4.4), subplot_kw={"projection": "polar"}, facecolor=COLOR_BG)
-            plot_radar_rm_vs_regions(ax, df_master)
-            show_matplotlib(fig)
-    with mid_right:
-        with st.container(border=True):
-            fig, ax = plt.subplots(figsize=(5.2, 4.4), facecolor=COLOR_BG)
-            plot_donut_vulnerability(ax, df_context)
-            show_matplotlib(fig)
-
-    with st.container(border=True):
-        fig, ax = plt.subplots(figsize=(10.0, 4.6), facecolor=COLOR_BG)
-        plot_subsidy_butterfly(ax, df_context)
-        show_matplotlib(fig)
 
     moran_text = (
         "**Existe un agrupamiento espacial significativo.** "
         "Las regiones con alta vulnerabilidad en viviendas subsidiadas tienden a "
         "estar geográficamente juntas, demostrando empíricamente que la segregación territorial no es un fenómeno aleatorio."
     ) if moran_p < 0.05 else "No se detecta un agrupamiento espacial estadísticamente significativo."
-    
-    st.markdown(f"""
-    <div style="background-color: {COLOR_ALMOND}20; border-left: 5px solid {COLOR_RM}; padding: 18px 20px; border-radius: 6px; margin-top: 16px; border: 1px solid rgba(211, 139, 93, 0.25); box-shadow: 0 4px 12px rgba(76,46,5,0.03);">
-        <h4 style="margin-top: 0; margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 17px; font-weight: 900;">📍 Análisis de Autocorrelación Espacial (Moran's I)</h4>
-        <p style="margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 14.5px;">Índice global: <b>{moran_i:.3f}</b> &nbsp;|&nbsp; Valor p: <b>{moran_p:.3f}</b></p>
-        <p style="margin-bottom: 0; color: rgba(76, 46, 5, 0.85); font-size: 14.5px; line-height: 1.5;">{moran_text}</p>
-    </div>
-    """, unsafe_allow_html=True)
+
+    with st.expander("Acceso al subsidio DS49", expanded=True):
+        with st.container(border=True):
+            show_matplotlib(plot_ds49_selected_region(ds49_totals, territory))
+
+    with st.expander("Brechas territoriales", expanded=False):
+        left_col, right_col = st.columns(2, gap="large")
+        with left_col:
+            with st.container(border=True):
+                fig, ax = plt.subplots(figsize=DASH_LINE_FIGSIZE, facecolor=COLOR_BG)
+                plot_historical_line_streamlit(ax, df_hist, df_hist_regions, selected_region)
+                show_matplotlib(fig)
+        with right_col:
+            with st.container(border=True):
+                fig, ax = plt.subplots(figsize=DASH_SQUARE_FIGSIZE, subplot_kw={"projection": "polar"}, facecolor=COLOR_BG)
+                plot_radar_streamlit(ax, df_master, selected_region)
+                show_matplotlib(fig)
+
+    with st.expander("Vulnerabilidad estructural", expanded=False):
+        left_col, right_col = st.columns([0.42, 0.58], gap="large")
+        with left_col:
+            with st.container(border=True):
+                fig, ax = plt.subplots(figsize=DASH_SQUARE_FIGSIZE, facecolor=COLOR_BG)
+                plot_donut_vulnerability(ax, df_context)
+                normalize_dashboard_title(
+                    ax,
+                    "5. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
+                    pad=7,
+                )
+                show_matplotlib(fig)
+        with right_col:
+            with st.container(border=True):
+                fig, ax = plt.subplots(figsize=DASH_BUTTERFLY_FIGSIZE, facecolor=COLOR_BG)
+                plot_subsidy_butterfly_streamlit(ax, df_context)
+                show_matplotlib(fig)
+
+    with st.expander("Lectura espacial", expanded=False):
+        st.markdown(f"""
+        <div style="background-color: {COLOR_ALMOND}20; border-left: 5px solid {COLOR_RM}; padding: 18px 20px; border-radius: 6px; border: 1px solid rgba(211, 139, 93, 0.25); box-shadow: 0 4px 12px rgba(76,46,5,0.03);">
+            <h4 style="margin-top: 0; margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 17px; font-weight: 900;">Autocorrelación espacial (Moran's I)</h4>
+            <p style="margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 14.5px;">Índice global: <b>{moran_i:.3f}</b> &nbsp;|&nbsp; Valor p: <b>{moran_p:.3f}</b></p>
+            <p style="margin-bottom: 0; color: rgba(76, 46, 5, 0.85); font-size: 14.5px; line-height: 1.5;">{moran_text}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 with tab_region:
