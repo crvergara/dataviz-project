@@ -219,5 +219,10 @@ data/*.xlsx
 deliverables/
 data_explorer/
 
+!data/processed/
+!data/processed/master_dataset.parquet
+!data/processed/balaceras_historico_zonas.parquet
+!data/processed/balaceras_historico_regiones.parquet
 !data/raw/SUDS49-ComunasMar2026.xlsx
 !data/raw/SUDS49Mar2026.xlsx
+!data/raw/regiones.json
