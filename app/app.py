@@ -214,6 +214,60 @@ CUSTOM_CSS = f"""
         margin: 0.25rem 0 0.75rem;
     }}
 
+    .chart-explainer {{
+        background: #fffaf0;
+        border: 1px solid rgba(211, 139, 93, 0.34);
+        border-left: 4px solid {COLOR_RM};
+        border-radius: 8px;
+        padding: 1.05rem 1.15rem 1.1rem;
+        box-shadow: 0 1px 0 rgba(76, 46, 5, 0.04);
+    }}
+
+    .explainer-kicker {{
+        color: {COLOR_RM};
+        font-size: 0.72rem;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        line-height: 1.15;
+        text-transform: uppercase;
+        margin-bottom: 0.34rem;
+    }}
+
+    .explainer-title {{
+        color: {COLOR_TEXT};
+        font-size: 1.16rem;
+        line-height: 1.12;
+        font-weight: 900;
+        margin-bottom: 0.5rem;
+    }}
+
+    .explainer-body {{
+        color: rgba(76, 46, 5, 0.78);
+        font-size: 0.9rem;
+        line-height: 1.46;
+    }}
+
+    .explainer-body b {{
+        color: {COLOR_TEXT};
+    }}
+
+    .explainer-takeaway {{
+        margin-top: 0.7rem;
+        padding-top: 0.65rem;
+        border-top: 1px solid rgba(211, 139, 93, 0.26);
+        color: rgba(76, 46, 5, 0.86);
+        font-size: 0.86rem;
+        line-height: 1.4;
+    }}
+
+    .tab-intro {{
+        color: rgba(76, 46, 5, 0.74);
+        font-size: 0.92rem;
+        line-height: 1.5;
+        max-width: 980px;
+        margin: -0.1rem 0 1.1rem;
+    }}
+
     .metric-card {{
         background: #fffaf0;
         border: 1px solid rgba(211, 139, 93, 0.34);
@@ -466,12 +520,31 @@ def show_matplotlib(fig):
     plt.close(fig)
 
 
+def chart_explainer(kicker, title, body, takeaway=None):
+    takeaway_html = (
+        f'<div class="explainer-takeaway">{takeaway}</div>' if takeaway else ""
+    )
+    st.markdown(
+        f"""
+        <div class="chart-explainer">
+            <div class="explainer-kicker">{escape(kicker)}</div>
+            <div class="explainer-title">{escape(title)}</div>
+            <div class="explainer-body">{body}</div>
+            {takeaway_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 DASH_TITLE_FS = 12.5
 DASH_LABEL_FS = 8.5
 DASH_TICK_FS = 8
 DASH_LINE_FIGSIZE = (8.8, 3.6)
 DASH_SQUARE_FIGSIZE = (5.6, 4.8)
 DASH_BUTTERFLY_FIGSIZE = (7.2, 4.8)
+# Tamaño uniforme para los graficos de la vista narrativa (misma altura/ancho en todos)
+DASH_STORY_FIGSIZE = (7.6, 4.7)
 
 
 def normalize_dashboard_title(ax, title=None, loc="left", pad=12):
@@ -1289,7 +1362,7 @@ def ds49_long_totals(ds49_totals):
     return valid.melt(id_vars="region", value_vars=years, var_name="year", value_name="beneficiados")
 
 
-def plot_ds49_selected_region(ds49_totals, selection):
+def plot_ds49_selected_region(ds49_totals, selection, figsize=DASH_LINE_FIGSIZE):
     data = ds49_long_totals(ds49_totals)
 
     if selection == "Chile completo":
@@ -1305,7 +1378,7 @@ def plot_ds49_selected_region(ds49_totals, selection):
         selected = data[data["region"].map(normalize_text).eq(normalize_text(selection))].copy()
         label = selection
 
-    fig, ax = plt.subplots(figsize=DASH_LINE_FIGSIZE, facecolor=COLOR_BG)
+    fig, ax = plt.subplots(figsize=figsize, facecolor=COLOR_BG)
     sns.lineplot(
         data=selected,
         x="year",
@@ -1621,6 +1694,20 @@ def plot_subsidy_butterfly_streamlit(ax, df):
     ax.axis("off")
 
 
+DATA_PREVIEW_RENAME = {
+    "region_nombre": "Región",
+    "grupo_vivienda": "Grupo vivienda",
+    "expr": "Factor de expansión",
+    "yautcorh": "Ingreso autónomo hogar",
+    "subsidy_ratio": "Razón subsidio (%)",
+    "v36b": "Balaceras (frecuencia)",
+    "v36c": "Narcotráfico (frecuencia)",
+    "pobreza": "Pobreza por ingresos",
+    "pobreza_multi": "Pobreza multidimensional",
+    "commute_total_hrs": "Traslado diario (hrs)",
+}
+
+
 def build_filtered_dataset_preview(df_context):
     cols = [
         "region",
@@ -1637,8 +1724,10 @@ def build_filtered_dataset_preview(df_context):
     available = [col for col in cols if col in df_context.columns]
     preview = df_context[available].copy()
     preview["region_nombre"] = preview["region"].map(REGION_NAMES)
+    if "subsidy_ratio" in preview.columns:
+        preview["subsidy_ratio"] = preview["subsidy_ratio"] * 100
     ordered = ["region_nombre"] + [col for col in available if col != "region"]
-    return preview[ordered]
+    return preview[ordered].rename(columns=DATA_PREVIEW_RENAME)
 
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -1814,6 +1903,11 @@ tab_story, tab_region, tab_data = st.tabs(["Vista narrativa", "Exploración regi
 
 with tab_story:
     st.markdown('<div class="section-label">Lectura principal</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="tab-intro">Recorrido visual de la situación de las viviendas subsidiadas en '
+        f'<b>{escape(territory)}</b>. Cada gráfico se acompaña de una breve lectura para interpretarlo.</div>',
+        unsafe_allow_html=True,
+    )
 
     moran_text = (
         "**Existe un agrupamiento espacial significativo.** "
@@ -1821,58 +1915,133 @@ with tab_story:
         "estar geográficamente juntas, demostrando empíricamente que la segregación territorial no es un fenómeno aleatorio."
     ) if moran_p < 0.05 else "No se detecta un agrupamiento espacial estadísticamente significativo."
 
-    with st.expander("Acceso al subsidio DS49", expanded=True):
+    comparison_name = region_display_name(selected_region) if (selected_region is not None and selected_region != 13) else None
+
+    # --- Gráfico 2: Acceso al subsidio DS49 ---
+    chart_col, text_col = st.columns([0.58, 0.42], gap="large", vertical_alignment="center")
+    with chart_col:
         with st.container(border=True):
-            show_matplotlib(plot_ds49_selected_region(ds49_totals, territory))
+            show_matplotlib(plot_ds49_selected_region(ds49_totals, territory, figsize=DASH_STORY_FIGSIZE))
+    with text_col:
+        chart_explainer(
+            "Gráfico 2 · Cobertura",
+            "Acceso al subsidio DS49",
+            f"Hogares que accedieron al subsidio habitacional <b>DS49</b> cada año en "
+            f"<b>{escape(territory)}</b>. La pendiente revela si la cobertura del programa "
+            f"se ha expandido o contraído en el tiempo.",
+            takeaway=f"Beneficiados DS49 2025: <b>{fmt_int(summary['ds49_2025'])}</b> (fuente MINVU).",
+        )
 
-    with st.expander("Brechas territoriales", expanded=False):
-        left_col, right_col = st.columns(2, gap="large")
-        with left_col:
-            with st.container(border=True):
-                fig, ax = plt.subplots(figsize=DASH_LINE_FIGSIZE, facecolor=COLOR_BG)
-                plot_historical_line_streamlit(ax, df_hist, df_hist_regions, selected_region)
-                show_matplotlib(fig)
-        with right_col:
-            with st.container(border=True):
-                fig, ax = plt.subplots(figsize=DASH_SQUARE_FIGSIZE, subplot_kw={"projection": "polar"}, facecolor=COLOR_BG)
-                plot_radar_streamlit(ax, df_master, selected_region)
-                show_matplotlib(fig)
+    # --- Gráfico 3: Evolución de balaceras ---
+    chart_col, text_col = st.columns([0.58, 0.42], gap="large", vertical_alignment="center")
+    with chart_col:
+        with st.container(border=True):
+            fig, ax = plt.subplots(figsize=DASH_STORY_FIGSIZE, facecolor=COLOR_BG)
+            plot_historical_line_streamlit(ax, df_hist, df_hist_regions, selected_region)
+            show_matplotlib(fig)
+    with text_col:
+        if comparison_name:
+            balaceras_body = (
+                f"Evolución del porcentaje de hogares subsidiados que reportan <b>balaceras "
+                f"frecuentes</b> en su entorno, comparando <b>Santiago (RM)</b> con "
+                f"<b>{escape(comparison_name)}</b>."
+            )
+        else:
+            balaceras_body = (
+                "Evolución del porcentaje de hogares subsidiados que reportan <b>balaceras "
+                "frecuentes</b> en su entorno, desagregado por zona del país."
+            )
+        chart_explainer(
+            "Gráfico 3 · Seguridad",
+            "Evolución de balaceras",
+            balaceras_body,
+            takeaway="Permite ver si la exposición a la violencia se ha agravado o reducido con los años.",
+        )
 
-    with st.expander("Vulnerabilidad estructural", expanded=False):
-        left_col, right_col = st.columns([0.42, 0.58], gap="large")
-        with left_col:
-            with st.container(border=True):
-                fig, ax = plt.subplots(figsize=DASH_SQUARE_FIGSIZE, facecolor=COLOR_BG)
-                plot_donut_vulnerability(ax, df_context)
-                normalize_dashboard_title(
-                    ax,
-                    "5. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
-                    pad=7,
-                )
-                show_matplotlib(fig)
-        with right_col:
-            with st.container(border=True):
-                fig, ax = plt.subplots(figsize=DASH_BUTTERFLY_FIGSIZE, facecolor=COLOR_BG)
-                plot_subsidy_butterfly_streamlit(ax, df_context)
-                show_matplotlib(fig)
+    # --- Gráfico 4: Perfil de vulnerabilidades (radar) ---
+    chart_col, text_col = st.columns([0.58, 0.42], gap="large", vertical_alignment="center")
+    with chart_col:
+        with st.container(border=True):
+            fig, ax = plt.subplots(figsize=DASH_STORY_FIGSIZE, subplot_kw={"projection": "polar"}, facecolor=COLOR_BG)
+            plot_radar_streamlit(ax, df_master, selected_region)
+            show_matplotlib(fig)
+    with text_col:
+        radar_target = comparison_name if comparison_name else "el resto de las regiones"
+        chart_explainer(
+            "Gráfico 4 · Perfil",
+            "Perfil de vulnerabilidades",
+            f"Cada eje resume una dimensión de precariedad —pobreza multidimensional, "
+            f"hacinamiento, balaceras, narcotráfico, falta de alumbrado y basura— en viviendas "
+            f"subsidiadas. Compara el perfil de <b>Santiago (RM)</b> con <b>{escape(radar_target)}</b>.",
+            takeaway="Mientras más se aleja la línea del centro, mayor es la prevalencia de esa dimensión.",
+        )
 
-    with st.expander("Lectura espacial", expanded=False):
-        st.markdown(f"""
-        <div style="background-color: {COLOR_ALMOND}20; border-left: 5px solid {COLOR_RM}; padding: 18px 20px; border-radius: 6px; border: 1px solid rgba(211, 139, 93, 0.25); box-shadow: 0 4px 12px rgba(76,46,5,0.03);">
-            <h4 style="margin-top: 0; margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 17px; font-weight: 900;">Autocorrelación espacial (Moran's I)</h4>
-            <p style="margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 14.5px;">Índice global: <b>{moran_i:.3f}</b> &nbsp;|&nbsp; Valor p: <b>{moran_p:.3f}</b></p>
-            <p style="margin-bottom: 0; color: rgba(76, 46, 5, 0.85); font-size: 14.5px; line-height: 1.5;">{moran_text}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # --- Gráfico 5: Vulnerabilidad estructural (donut) ---
+    chart_col, text_col = st.columns([0.58, 0.42], gap="large", vertical_alignment="center")
+    with chart_col:
+        with st.container(border=True):
+            fig, ax = plt.subplots(figsize=DASH_STORY_FIGSIZE, facecolor=COLOR_BG)
+            plot_donut_vulnerability(ax, df_context)
+            normalize_dashboard_title(
+                ax,
+                "5. Vulnerabilidad estructural en\nViviendas Subsidiadas (%)",
+                pad=7,
+            )
+            show_matplotlib(fig)
+    with text_col:
+        chart_explainer(
+            "Gráfico 5 · Síntesis",
+            "Vulnerabilidad estructural",
+            f"Proporción de viviendas subsidiadas que enfrentan al menos una <b>trampa "
+            f"estructural</b> (entorno violento o presión económica) en <b>{escape(territory)}</b>.",
+            takeaway=f"Vulnerabilidad estructural en {escape(territory)}: "
+            f"<b>{fmt_pct(summary['vulnerabilidad'])}</b> de los hogares subsidiados.",
+        )
+
+    # --- Gráfico 6: Con subsidio vs sin subsidio (butterfly) ---
+    chart_col, text_col = st.columns([0.58, 0.42], gap="large", vertical_alignment="center")
+    with chart_col:
+        with st.container(border=True):
+            fig, ax = plt.subplots(figsize=DASH_STORY_FIGSIZE, facecolor=COLOR_BG)
+            plot_subsidy_butterfly_streamlit(ax, df_context)
+            show_matplotlib(fig)
+    with text_col:
+        chart_explainer(
+            "Gráfico 6 · Contraste",
+            "Con subsidio vs sin subsidio",
+            "Contrasta, variable por variable, la prevalencia de cada factor de vulnerabilidad "
+            "entre hogares <b>con</b> y <b>sin</b> subsidio.",
+            takeaway="Revela si el acceso al subsidio se asocia a mayor o menor exposición a la precariedad.",
+        )
+
+    # --- Lectura espacial (Moran's I) ---
+    st.markdown('<div class="section-label">Lectura espacial</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background-color: {COLOR_ALMOND}20; border-left: 5px solid {COLOR_RM}; padding: 18px 20px; border-radius: 6px; border: 1px solid rgba(211, 139, 93, 0.25); box-shadow: 0 4px 12px rgba(76,46,5,0.03);">
+        <h4 style="margin-top: 0; margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 17px; font-weight: 900;">Autocorrelación espacial (Moran's I)</h4>
+        <p style="margin-bottom: 8px; color: {COLOR_TEXT}; font-size: 14.5px;">Índice global: <b>{moran_i:.3f}</b> &nbsp;|&nbsp; Valor p: <b>{moran_p:.3f}</b></p>
+        <p style="margin-bottom: 0; color: rgba(76, 46, 5, 0.85); font-size: 14.5px; line-height: 1.5;">{moran_text}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 with tab_region:
-    st.markdown('<div class="section-label">Territorio seleccionado</div>', unsafe_allow_html=True)
-    region_left, region_right = st.columns([1.2, 0.8], gap="large")
+    st.markdown('<div class="section-label">Exploración regional</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tab-intro">Ranking comparativo de las 16 regiones según su tasa de '
+        'vulnerabilidad estructural en viviendas subsidiadas. La región seleccionada aparece '
+        'destacada en color para situarla frente al resto del país.</div>',
+        unsafe_allow_html=True,
+    )
+    region_left, region_right = st.columns([1.2, 0.8], gap="large", vertical_alignment="top")
 
     with region_left:
         with st.container(border=True):
             show_matplotlib(plot_regional_ranking(regional_metrics, selected_region))
+            st.caption(
+                "Cada barra es una región. La barra naranja corresponde al territorio "
+                "seleccionado; las demás se muestran como referencia."
+            )
 
     with region_right:
         with st.container(border=True):
@@ -1886,12 +2055,12 @@ with tab_region:
                 delta_val = val - national_pct
                 ordered = regional_metrics.sort_values("pct_vulnerabilidad", ascending=False).reset_index()
                 rank = ordered.index[ordered["region"] == selected_region].tolist()[0] + 1
-                
+
                 st.metric(
                     label="Vulnerabilidad en viviendas subsidiadas",
                     value=f"{val:.1f}%",
                     delta=f"{delta_val:+.1f} pp vs Promedio Nacional",
-                    delta_color="inverse"
+                    delta_color="inverse",
                 )
                 st.markdown(f'''
                 <div style="font-size: 13.5px; color: rgba(76, 46, 5, 0.85); margin-top: -5px; margin-bottom: 22px; padding: 12px; background-color: #fffaf0; border-left: 4px solid {COLOR_RM}; border-radius: 4px;">
@@ -1899,6 +2068,12 @@ with tab_region:
                 </div>
                 ''', unsafe_allow_html=True)
             else:
+                st.markdown(
+                    '<p style="font-size: 13.5px; color: rgba(76, 46, 5, 0.75); margin: 0 0 10px;">'
+                    'Selecciona una región para ver su tasa y ranking. Mientras tanto, esta es la '
+                    'tabla comparativa completa.</p>',
+                    unsafe_allow_html=True,
+                )
                 st.dataframe(
                     selected_metrics[["region_name", "pct_vulnerabilidad"]].sort_values("pct_vulnerabilidad", ascending=False).rename(
                         columns={
@@ -1908,37 +2083,79 @@ with tab_region:
                     ),
                     hide_index=True,
                     width="stretch",
+                    column_config={
+                        "% vulnerabilidad subsidiadas": st.column_config.NumberColumn(
+                            "% vulnerabilidad", format="%.1f%%"
+                        ),
+                    },
                 )
-
-            st.markdown("#### Evolución DS49")
-            show_matplotlib(plot_ds49_selected_region(ds49_totals, territory))
 
 
 with tab_data:
-    st.markdown('<div class="section-label">Datos filtrados</div>', unsafe_allow_html=True)
-    show_methodology = st.checkbox("Mostrar metodología", value=False)
+    st.markdown('<div class="section-label">Datos y metodología</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="tab-intro">Datos de la encuesta <b>CASEN</b> filtrados para '
+        f'<b>{escape(territory)}</b>, junto a las definiciones metodológicas empleadas en '
+        f'todo el tablero. Puedes explorar la tabla y descargarla en formato CSV.</div>',
+        unsafe_allow_html=True,
+    )
+
     preview = build_filtered_dataset_preview(df_context)
-    st.dataframe(preview.head(600), hide_index=True, width="stretch")
+    total_records = len(df_context)
+    households = df_context["expr"].sum() if "expr" in df_context.columns else np.nan
+
+    stat_cols = st.columns(3)
+    with stat_cols[0]:
+        metric_card("Registros en la muestra", fmt_int(total_records), f"Encuestas CASEN · {territory}", COLOR_RESTO)
+    with stat_cols[1]:
+        metric_card("Hogares representados", fmt_int(households), "Estimación ponderada (factor expansión)", COLOR_RM)
+    with stat_cols[2]:
+        metric_card("Variables mostradas", str(preview.shape[1]), "Indicadores seleccionados por hogar", COLOR_ALMOND)
+
+    st.markdown('<div class="section-label" style="margin-top: 1.1rem;">Datos filtrados</div>', unsafe_allow_html=True)
+    st.dataframe(
+        preview.head(600),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Factor de expansión": st.column_config.NumberColumn(format="%d"),
+            "Ingreso autónomo hogar": st.column_config.NumberColumn(format="$ %d"),
+            "Razón subsidio (%)": st.column_config.NumberColumn(format="%.1f%%"),
+            "Traslado diario (hrs)": st.column_config.NumberColumn(format="%.1f"),
+        },
+    )
+    st.caption(
+        f"Mostrando hasta 600 de {fmt_int(total_records)} registros. Descarga el CSV para el detalle completo."
+    )
 
     csv_data = preview.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Descargar datos filtrados",
+        "Descargar datos filtrados (CSV)",
         data=csv_data,
         file_name=f"datos_filtrados_{normalize_text(territory).replace(' ', '_')}.csv",
         mime="text/csv",
     )
 
-    if show_methodology:
+    st.markdown('<div class="section-label" style="margin-top: 1.3rem;">Metodología</div>', unsafe_allow_html=True)
+    with st.expander("Definiciones y fuentes utilizadas en el tablero", expanded=False):
         st.markdown(
             """
-            **Definiciones usadas en el dashboard**
+            **Definiciones**
 
             - **Vivienda subsidiada:** hogares clasificados como `grupo_vivienda == "Subsidiada"`.
             - **Entorno violento:** presencia frecuente de balaceras o narcotráfico según variables CASEN.
             - **Presión económica:** ingreso autónomo del hogar menor a $600.000 o razón de subsidio superior a 20%.
             - **Vulnerabilidad estructural:** hogares subsidiados que presentan entorno violento o presión económica.
             - **Moran's I:** autocorrelación espacial regional calculada con contigüidad Queen sobre el mapa regional.
+
+            **Fuentes**
+
+            - **CASEN** (Encuesta de Caracterización Socioeconómica Nacional) — Ministerio de Desarrollo Social.
+            - **DS49** — Registro de beneficiados del subsidio habitacional, MINVU.
+
+            **Nota sobre la ponderación**
+
+            Todos los porcentajes se calculan ponderando por el factor de expansión (`expr`),
+            de modo que las cifras representan hogares a nivel poblacional y no el conteo simple de encuestas.
             """
         )
-    else:
-        st.info("Activa 'Mostrar metodología' en esta pestaña para ver las definiciones usadas.")
