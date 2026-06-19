@@ -561,7 +561,7 @@ def plot_subsidy_butterfly(ax, df):
     ax.text(12, top_y + 0.60, 'CON SUBSIDIO', ha='left', va='bottom',
             color=COLOR_RM, fontsize=7.9, fontweight='black')
 
-    ax.text(-50, top_y + 1.68, "6. Vulnerabilidades nacionales:\nCon subsidio vs Sin subsidio (%)",
+    ax.text(-50, top_y + 1.68, "6. Vulnerabilidades nacionales:\nSin subsidio vs Con subsidio (%)",
             ha='left', va='top', fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT,
             linespacing=1.05)
 
