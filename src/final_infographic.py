@@ -486,24 +486,24 @@ def plot_subsidy_butterfly(ax, df):
     """Comparativa nacional: viviendas sin subsidio vs con subsidio."""
     df = df.copy()
     df['Balaceras Frecuentes'] = np.where(df['v36b'] >= 3, 1, 0)
-    df['Narco-trafico Frecuente'] = np.where(df['v36c'] >= 3, 1, 0)
+    df['Narcotráfico Frecuente'] = np.where(df['v36c'] >= 3, 1, 0)
     df['Alta Dependencia (>20%)'] = np.where(df['subsidy_ratio'] > 0.20, 1, 0)
-    df['Ingreso Autonomo <$600k'] = np.where(df['yautcorh'] < 600000, 1, 0)
+    df['Ingreso Autónomo <$600k'] = np.where(df['yautcorh'] < 600000, 1, 0)
     df['Pobreza por Ingresos'] = np.where(df['pobreza'].isin([1, 2]), 1, 0)
 
     vars_to_plot = [
         'Balaceras Frecuentes',
-        'Narco-trafico Frecuente',
+        'Narcotráfico Frecuente',
         'Pobreza por Ingresos',
         'Alta Dependencia (>20%)',
-        'Ingreso Autonomo <$600k',
+        'Ingreso Autónomo <$600k',
     ]
     label_map = {
         'Balaceras Frecuentes': 'BALACERAS',
-        'Narco-trafico Frecuente': 'NARCO FRECUENTE',
+        'Narcotráfico Frecuente': 'NARCO FRECUENTE',
         'Pobreza por Ingresos': 'POBREZA INGRESOS',
         'Alta Dependencia (>20%)': 'DEPENDENCIA >20%',
-        'Ingreso Autonomo <$600k': 'INGRESO <$600K',
+        'Ingreso Autónomo <$600k': 'INGRESO <$600K',
     }
 
     df_sub = df[df['is_subsidized'] == 1]
@@ -978,11 +978,13 @@ def generate_infographic():
     add_story_block(fig)
     add_qr_code(fig)
     
-    # Línea decorativa inferior
-    fig.text(0.5, 0.025, "DS49: Fondo Solidario de Elección de Vivienda, subsidio habitacional para familias sin vivienda.", 
-             ha='center', fontsize=6.7, color=COLOR_ALMOND)
-    fig.text(0.5, 0.014, "Fuente: Elaboración propia basada en CASEN 2024, Censo 2024 y MINVU DS49 · Universidad de Concepción",
-             ha='center', fontsize=7.2, color=COLOR_ALMOND)
+    # Footer consolidado (Leyenda, Temporalidad y N) - Rúbrica
+    fig.text(0.5, 0.024, "Fuente: Elaboración propia con CASEN 2024 (N=77.858 filas), histórico CASEN (2015-2024) y registros MINVU DS49 (2013-2025) · Universidad de Concepción", 
+             ha='center', fontsize=7.4, color=COLOR_TEXT, fontweight='bold')
+    fig.text(0.5, 0.010, "DS49: Fondo Solidario de Elección de Vivienda, subsidio habitacional para familias sin vivienda.", 
+             ha='center', fontsize=7.0, color=COLOR_ALMOND)
+
+
 
     # Guardar
     output_path = "deliverables/infografia_final_maquina_dependencia.pdf"
