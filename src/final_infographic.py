@@ -980,7 +980,7 @@ def generate_infographic():
     
     # Footer consolidado (Leyenda, Temporalidad y N) - Rúbrica
     fig.text(0.5, 0.024, "Fuente: Elaboración propia con CASEN 2024 (N=77.858 filas), histórico CASEN (2015-2024) y registros MINVU DS49 (2013-2025) · Universidad de Concepción", 
-             ha='center', fontsize=7.4, color=COLOR_TEXT, fontweight='bold')
+             ha='center', fontsize=6.0, color=COLOR_TEXT, fontweight='bold')
     fig.text(0.5, 0.010, "DS49: Fondo Solidario de Elección de Vivienda, subsidio habitacional para familias sin vivienda.", 
              ha='center', fontsize=7.0, color=COLOR_ALMOND)
 
