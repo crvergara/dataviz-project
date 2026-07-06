@@ -375,11 +375,11 @@ def plot_ds49_yoy_growth(ax, data):
     )
 
     ax.axhline(0, color=COLOR_TEXT, linewidth=0.95, alpha=0.52, zorder=1)
-    ax.text(1.0, 1.090, "2. Beneficiados DS49: crecimiento interanual (%)",
-            transform=ax.transAxes, ha="right", va="bottom",
+    ax.text(0.35, 1.090, "2. Beneficiados DS49: crecimiento interanual (%)",
+            transform=ax.transAxes, ha="left", va="bottom",
             fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT)
-    ax.text(1.0, 1.040, "Santiago (RM) vs regiones, 2013-2025",
-            transform=ax.transAxes, ha="right", va="bottom",
+    ax.text(0.35, 1.040, "Santiago (RM) vs regiones, 2013-2025",
+            transform=ax.transAxes, ha="left", va="bottom",
             fontsize=7.5, color=COLOR_TEXT, alpha=0.78)
 
     ax.set_ylim(-85, 210)
@@ -561,7 +561,7 @@ def plot_subsidy_butterfly(ax, df):
     ax.text(12, top_y + 0.60, 'CON SUBSIDIO', ha='left', va='bottom',
             color=COLOR_RM, fontsize=7.9, fontweight='black')
 
-    ax.text(-50, top_y + 1.68, "6. Vulnerabilidades nacionales:\nSin subsidio vs Con subsidio (%)",
+    ax.text(-55, top_y + 1.80, "6. Vulnerabilidades nacionales:\nSin subsidio vs Con subsidio (%)",
             ha='left', va='top', fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT,
             linespacing=1.05)
 
@@ -669,7 +669,7 @@ def plot_radar_rm_vs_regions(ax, df):
     ax.spines['polar'].set_visible(False)
 
     ax.set_title("4. Vulnerabilidades subsidiadas:\nSantiago vs Regiones (%)",
-                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, pad=2)
+                 fontsize=TITLE_FS, fontweight='black', color=COLOR_TEXT, loc='left', pad=2)
     ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.17), ncol=2,
               frameon=False, fontsize=5.7, handlelength=1.4, columnspacing=0.8)
 
@@ -908,6 +908,16 @@ def add_story_block(fig):
     )
     draw_justified_paragraph(ax, story, x0=0.0, x1=1.0, y_top=0.82, fontsize=7.05)
 
+def add_qr_code(fig, path="datavisualizationQR.png"):
+    """Agrega QR discreto en el margen inferior derecho."""
+    if not os.path.exists(path):
+        return
+
+    qr = plt.imread(path)
+    ax = fig.add_axes([0.927, 0.044, 0.065, 0.046])
+    ax.imshow(qr, interpolation="nearest")
+    ax.axis("off")
+
 def generate_infographic():
     print("Cargando datos...")
     df_master = pd.read_parquet("data/processed/master_dataset.parquet")
@@ -966,6 +976,7 @@ def generate_infographic():
     plot_subsidy_butterfly(ax6, df_master)
 
     add_story_block(fig)
+    add_qr_code(fig)
     
     # Línea decorativa inferior
     fig.text(0.5, 0.025, "DS49: Fondo Solidario de Elección de Vivienda, subsidio habitacional para familias sin vivienda.", 
